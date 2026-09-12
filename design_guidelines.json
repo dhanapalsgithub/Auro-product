@@ -1,0 +1,143 @@
+{
+  "project_name": "Auro Products GST Billing & Wine Shop Cotton Box Management System",
+  "app_type": "dashboard / saas_app",
+  "archetype": "Liquid Glass & Tactical Precision (Dark Mode / Frosted Glass Aesthetic)",
+  "company_details": {
+    "name": "Auro Products",
+    "business": "Cotton Box Supply & Recycling Contractor for Tamil Nadu TASMAC Wine Shops",
+    "gstin": "33AAFFA1234F1ZB",
+    "state_code": "33 - Tamil Nadu",
+    "address": "No. 42, Industrial Estate, Guindy, Chennai, Tamil Nadu - 600032",
+    "hsn_code": "4819 - Cartons, boxes, cases of corrugated paper or paperboard",
+    "gst_rate": {
+      "cgst_percent": 9,
+      "sgst_percent": 9,
+      "total_gst_percent": 18
+    }
+  },
+  "typography": {
+    "headings_font": "Outfit, sans-serif",
+    "body_font": "IBM Plex Sans, sans-serif",
+    "mono_font": "JetBrains Mono, monospace",
+    "size_hierarchy": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl font-bold tracking-tight leading-none",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl font-semibold tracking-tight",
+      "h3": "text-xl sm:text-2xl font-medium",
+      "h4": "text-lg sm:text-xl font-medium",
+      "body": "text-base leading-relaxed text-slate-200",
+      "small": "text-sm text-slate-400 font-normal",
+      "caption": "text-xs text-slate-500 uppercase tracking-widest font-mono"
+    }
+  },
+  "colors": {
+    "mode": "dark",
+    "theme": "Liquid Glass Cyan-Emerald",
+    "base_background": "#090d16",
+    "glass_surfaces": {
+      "card_bg": "rgba(15, 23, 42, 0.65)",
+      "card_border": "rgba(255, 255, 255, 0.12)",
+      "card_hover_border": "rgba(6, 182, 212, 0.5)",
+      "header_bg": "rgba(15, 23, 42, 0.8)",
+      "sidebar_bg": "rgba(10, 15, 29, 0.9)",
+      "modal_overlay": "rgba(4, 7, 13, 0.85)"
+    },
+    "accents": {
+      "primary": "#06b6d4",
+      "primary_hover": "#0891b2",
+      "secondary": "#10b981",
+      "warning": "#f59e0b",
+      "danger": "#ef4444",
+      "info": "#3b82f6"
+    },
+    "text": {
+      "primary": "#f8fafc",
+      "secondary": "#94a3b8",
+      "muted": "#64748b",
+      "accent": "#22d3ee"
+    }
+  },
+  "visual_enhancers": {
+    "liquid_glass_style": {
+      "backdrop_filter": "backdrop-blur-xl backdrop-saturate-150",
+      "box_shadow": "0 8px 32px 0 rgba(0, 0, 0, 0.37), inset 0 1px 0 0 rgba(255, 255, 255, 0.15)",
+      "glow_effect": "shadow-[0_0_20px_rgba(6,182,212,0.15)]",
+      "border_radius": "rounded-2xl"
+    },
+    "custom_scrollbar": "scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-slate-900"
+  },
+  "grids": {
+    "dashboard_grid": "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6",
+    "bento_hero": "grid grid-cols-1 lg:grid-cols-12 gap-8",
+    "spacing_scale": {
+      "section_padding": "p-6 md:p-8 lg:p-10",
+      "card_padding": "p-5 md:p-6",
+      "gap": "gap-4 md:gap-6"
+    }
+  },
+  "layouts": {
+    "sidebar": {
+      "width": "w-64",
+      "nav_items": [
+        {"name": "Dashboard & Reminders", "icon": "LayoutDashboard", "path": "/dashboard"},
+        {"name": "149 Wine Shops", "icon": "Store", "path": "/shops"},
+        {"name": "Cotton Box Entry", "icon": "PackagePlus", "path": "/box-entry"},
+        {"name": "GST Invoices", "icon": "Receipt", "path": "/invoices"},
+        {"name": "Waste Analytics", "icon": "Scale", "path": "/waste-analytics"},
+        {"name": "Calendar & Schedule", "icon": "Calendar", "path": "/calendar"},
+        {"name": "Settings", "icon": "Settings", "path": "/settings"}
+      ]
+    },
+    "header": {
+      "height": "h-16",
+      "features": ["Quick Shop Search", "Pickup Reminders Alert Counter", "Date/Cycle Filter", "Company Profile Dropdown"]
+    }
+  },
+  "motion": {
+    "card_hover": "transition-all duration-300 hover:-translate-y-1 hover:shadow-cyan-500/20",
+    "button_press": "transition-transform active:scale-95",
+    "modal_fade": "transition-opacity duration-200"
+  },
+  "accessibility": {
+    "contrast": "APCA & WCAG AA compliant with dark high-contrast contrast text",
+    "data_testid_convention": "kebab-case, role-based, e.g., data-testid='shop-entry-submit-button', data-testid='print-invoice-button', data-testid='waste-calc-output'",
+    "focus_states": "focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 focus:ring-offset-slate-900"
+  },
+  "media": {
+    "image_urls": [
+      {
+        "url": "https://images.unsplash.com/photo-1624137527136-66e631bdaa0e?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNTl8MHwxfHNlYXJjaHwyfHxsb2dpc3RpY3MlMjByZWN5Y2xpbmclMjBib3glMjB3YXJlaG91c2UlMjBwYXBlciUyMGJveCUyMHBhY2thZ2luZ3xlbnwwfHx8fDE3ODkxOTAxNzh8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Stacked cardboard boxes representing cotton box inventory",
+        "category": "inventory_hero"
+      },
+      {
+        "url": "https://images.unsplash.com/photo-1700165644892-3dd6b67b25bc?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzNTl8MHwxfHNlYXJjaHwxfHxsb2dpc3RpY3MlMjByZWN5Y2xpbmclMjBib3glMjB3YXJlaG91c2UlMjBwYXBlciUyMGJveCUyMHBhY2thZ2luZ3xlbnwwfHx8fDE3ODkxOTAxNzh8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Open paper box grid symbolizing shop distribution",
+        "category": "warehouse_boxes"
+      }
+    ]
+  },
+  "3d_libraries": {
+    "canvas_visualizer": "Optional lightweight Canvas / Three.js particle wave background or animated liquid glass refraction highlights on stats cards"
+  },
+  "component_path": "/app/frontend/src/components/",
+  "instructions_to_main_agent": [
+    "Build a complete liquid-glass billing & inventory application tailored for Auro Products (contractor taking Tamil Nadu wine shop cotton box tender).",
+    "Core Feature 1: 149 TASMAC Wine Shops Directory with Shop No (e.g., Shop #1001 to #1149), District/Location (Chennai, Madurai, Coimbatore, Salem, Trichy, Tanjore, etc.), Supervisor Name, Contact, Cycle Days (default 5 days or 2 days).",
+    "Core Feature 2: Delivery Reminders Dashboard - calculates next pickup date based on last entry date + shop cycle days. Highlight shops due today or overdue with pulsing alert badges.",
+    "Core Feature 3: Inventory Entry - Enter shop number, cotton box unit pcs (e.g. 2500 pcs). Auto-calculate Waste in kg using formula (Quantity / 12 kg). E.g. 2500 pcs / 12 = 208.33 kg waste.",
+    "Core Feature 4: GST Billing Invoice Generator - Generates official Tamil Nadu Tax Invoice for Auro Products with 18% GST (9% CGST + 9% SGST). Includes HSN 4819, Taxable Amount, CGST 9%, SGST 9%, Total Invoice Value, Rounding, Bank Account details, Terms, QR code, Triplicate copy tag.",
+    "Core Feature 5: Invoice PDF / Print view matching standard Indian GST invoice layout (clean black-and-white print output format with border grids, signature line, tax breakdown table).",
+    "Core Feature 6: Searchable & Paginated Tables across All Shops, Invoices, Box Entries, with Calendar/Date range filters and CSV export.",
+    "Core Feature 7: Liquid Glass UI theme with frosted transparent glass cards (backdrop-blur-xl bg-slate-900/65 border border-white/10 shadow-xl shadow-cyan-950/20), neon cyan/emerald active indicators, and sleek sidebar.",
+    "Core Feature 8: Settings Page - Allow editing company name (Auro Products), GSTIN, Tax Rates, Default Rate per Box / per KG, and tender reference numbers.",
+    "Ensure all buttons, inputs, modals, table cells, and summary counters have explicit kebab-case data-testid attributes for testing."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": {
+    "no_ai_slop": "Avoid generic centered white cards or flat default themes. Use frosted liquid glass layering with cyan highlights.",
+    "spacing_and_padding": "Containers with borders MUST have generous padding (p-6/p-8) to avoid text collision.",
+    "button_styling": "Pill-shaped or rounded-xl glass buttons with glow interactions and active transform states.",
+    "data_testid": "All key elements must have descriptive data-testid attributes.",
+    "toasts": "Use sonner for user action confirmations (e.g., 'Invoice created', 'Inventory entry saved').",
+    "no_emoji_icons": "Never use emoji characters as icons. Use Lucide React icons."
+  }
+}
