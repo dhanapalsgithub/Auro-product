@@ -5,7 +5,7 @@ import os
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
+from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Header, UploadFile, File, BackgroundTasks
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field
@@ -15,7 +15,16 @@ import uuid
 import logging
 import jwt
 import bcrypt
+import hmac
+import io
+import re
+import ipaddress
+import httpx
+from html import escape
+from html.parser import HTMLParser
+from urllib.parse import urlparse
 from bson import ObjectId
+import openpyxl
 
 # ---------------- DB ----------------
 mongo_url = os.environ['MONGO_URL']
@@ -79,6 +88,7 @@ class Shop(BaseModel):
     supervisor: str = ""
     contact: str = ""
     cycle_days: int = 5
+    opening_balance: float = 0.0
     active: bool = True
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -90,6 +100,7 @@ class ShopCreate(BaseModel):
     supervisor: str = ""
     contact: str = ""
     cycle_days: int = 5
+    opening_balance: float = 0.0
 
 class ShopUpdate(BaseModel):
     shop_no: Optional[str] = None
@@ -99,7 +110,16 @@ class ShopUpdate(BaseModel):
     supervisor: Optional[str] = None
     contact: Optional[str] = None
     cycle_days: Optional[int] = None
+    opening_balance: Optional[float] = None
     active: Optional[bool] = None
+
+class PaymentCreate(BaseModel):
+    shop_id: str
+    invoice_id: Optional[str] = None
+    amount: float
+    mode: str = "Cash"
+    payment_date: Optional[str] = None
+    notes: str = ""
 
 class BoxEntry(BaseModel):
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -148,6 +168,9 @@ class SettingsModel(BaseModel):
     bank_name: str = ""
     account_no: str = ""
     ifsc: str = ""
+    upi_id: str = ""
+    reminder_email: str = "bmartbuild4@gmail.com"
+    reminder_whatsapp: str = ""
     tender_ref: str = ""
     terms: str = "Goods once sold will not be taken back. Payment due within 7 days."
 
@@ -333,6 +356,9 @@ async def create_invoice(data: InvoiceCreate, user: dict = Depends(get_current_u
         "sgst": sgst,
         "round_off": round_off,
         "grand_total": grand_total,
+        "amount_paid": 0.0,
+        "balance": grand_total,
+        "status": "unpaid",
         "seller": {
             "name": settings.get("company_name"),
             "gstin": settings.get("gstin"),
@@ -344,6 +370,7 @@ async def create_invoice(data: InvoiceCreate, user: dict = Depends(get_current_u
             "bank_name": settings.get("bank_name"),
             "account_no": settings.get("account_no"),
             "ifsc": settings.get("ifsc"),
+            "upi_id": settings.get("upi_id"),
             "terms": settings.get("terms"),
         },
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -438,6 +465,417 @@ async def waste_analytics(user: dict = Depends(get_current_user)):
     shop_rows.sort(key=lambda x: x["waste"], reverse=True)
     month_rows = [{"month": k, "boxes": v["boxes"], "waste": round(v["waste"], 2)} for k, v in sorted(by_month.items())]
     return {"by_shop": shop_rows, "by_month": month_rows}
+
+# ---------------- Payments & Ledger ----------------
+async def recompute_invoice(invoice_id: str):
+    inv = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
+    if not inv:
+        return
+    paid = 0.0
+    async for p in db.payments.find({"invoice_id": invoice_id}):
+        paid += p.get("amount", 0)
+    paid = round(paid, 2)
+    balance = round(inv["grand_total"] - paid, 2)
+    status = "paid" if balance <= 0.01 else ("partial" if paid > 0 else "unpaid")
+    await db.invoices.update_one({"id": invoice_id}, {"$set": {"amount_paid": paid, "balance": balance, "status": status}})
+
+@api_router.get("/payments")
+async def list_payments(shop_id: str = "", start: str = "", end: str = "", user: dict = Depends(get_current_user)):
+    query = {}
+    if shop_id:
+        query["shop_id"] = shop_id
+    if start or end:
+        rng = {}
+        if start:
+            rng["$gte"] = start
+        if end:
+            rng["$lte"] = end + "T23:59:59"
+        query["payment_date"] = rng
+    payments = await db.payments.find(query, {"_id": 0}).sort("payment_date", -1).to_list(3000)
+    return payments
+
+@api_router.post("/payments")
+async def create_payment(data: PaymentCreate, user: dict = Depends(get_current_user)):
+    shop = await db.shops.find_one({"id": data.shop_id}, {"_id": 0})
+    if not shop:
+        raise HTTPException(status_code=404, detail="Shop not found")
+    inv_no = ""
+    if data.invoice_id:
+        inv = await db.invoices.find_one({"id": data.invoice_id}, {"_id": 0})
+        inv_no = inv["invoice_no"] if inv else ""
+    payment = {
+        "id": str(uuid.uuid4()),
+        "shop_id": shop["id"], "shop_no": shop["shop_no"], "shop_name": shop["name"],
+        "invoice_id": data.invoice_id or "", "invoice_no": inv_no,
+        "amount": round(data.amount, 2), "mode": data.mode,
+        "payment_date": data.payment_date or datetime.now(timezone.utc).isoformat(),
+        "notes": data.notes,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.payments.insert_one({**payment})
+    payment.pop("_id", None)
+    if data.invoice_id:
+        await recompute_invoice(data.invoice_id)
+    return payment
+
+@api_router.delete("/payments/{payment_id}")
+async def delete_payment(payment_id: str, user: dict = Depends(get_current_user)):
+    p = await db.payments.find_one({"id": payment_id}, {"_id": 0})
+    await db.payments.delete_one({"id": payment_id})
+    if p and p.get("invoice_id"):
+        await recompute_invoice(p["invoice_id"])
+    return {"ok": True}
+
+@api_router.get("/ledger/{shop_id}")
+async def shop_ledger(shop_id: str, user: dict = Depends(get_current_user)):
+    shop = await db.shops.find_one({"id": shop_id}, {"_id": 0})
+    if not shop:
+        raise HTTPException(status_code=404, detail="Shop not found")
+    opening = shop.get("opening_balance", 0.0)
+    invoices = await db.invoices.find({"shop_id": shop_id}, {"_id": 0}).to_list(2000)
+    payments = await db.payments.find({"shop_id": shop_id}, {"_id": 0}).to_list(2000)
+    rows = []
+    for inv in invoices:
+        rows.append({"date": inv["invoice_date"], "type": "invoice", "ref": inv["invoice_no"],
+                     "particulars": f"Invoice {inv['invoice_no']}", "debit": inv["grand_total"], "credit": 0})
+    for p in payments:
+        rows.append({"date": p["payment_date"], "type": "payment", "ref": p.get("invoice_no", ""),
+                     "particulars": f"Payment ({p['mode']})", "debit": 0, "credit": p["amount"]})
+    rows.sort(key=lambda r: r["date"])
+    balance = opening
+    for r in rows:
+        balance += r["debit"] - r["credit"]
+        r["balance"] = round(balance, 2)
+    total_debit = round(sum(r["debit"] for r in rows), 2)
+    total_credit = round(sum(r["credit"] for r in rows), 2)
+    return {
+        "shop": {"shop_no": shop["shop_no"], "name": shop["name"], "location": shop.get("location", "")},
+        "opening_balance": opening, "rows": rows,
+        "total_debit": total_debit, "total_credit": total_credit,
+        "closing_balance": round(opening + total_debit - total_credit, 2),
+    }
+
+# ---------------- Reports ----------------
+@api_router.get("/reports/daily")
+async def daily_report(day: str = "", user: dict = Depends(get_current_user)):
+    if not day:
+        day = datetime.now(timezone.utc).date().isoformat()
+    lo, hi = day, day + "T23:59:59"
+    entries = await db.entries.find({"entry_date": {"$gte": lo, "$lte": hi}}, {"_id": 0}).to_list(3000)
+    invoices = await db.invoices.find({"invoice_date": {"$gte": lo, "$lte": hi}}, {"_id": 0}).to_list(3000)
+    payments = await db.payments.find({"payment_date": {"$gte": lo, "$lte": hi}}, {"_id": 0}).to_list(3000)
+    return {
+        "day": day,
+        "boxes": sum(e.get("quantity", 0) for e in entries),
+        "waste_kg": round(sum(e.get("waste_kg", 0) for e in entries), 2),
+        "entries_count": len(entries),
+        "invoice_count": len(invoices),
+        "invoice_total": round(sum(i.get("grand_total", 0) for i in invoices), 2),
+        "collections": round(sum(p.get("amount", 0) for p in payments), 2),
+        "entries": entries, "invoices": invoices, "payments": payments,
+    }
+
+@api_router.get("/reports/monthly")
+async def monthly_report(month: str = "", user: dict = Depends(get_current_user)):
+    if not month:
+        month = datetime.now(timezone.utc).strftime("%Y-%m")
+    lo, hi = month + "-01", month + "-31T23:59:59"
+    entries = await db.entries.find({"entry_date": {"$gte": lo, "$lte": hi}}, {"_id": 0}).to_list(9000)
+    invoices = await db.invoices.find({"invoice_date": {"$gte": lo, "$lte": hi}}, {"_id": 0}).to_list(9000)
+    payments = await db.payments.find({"payment_date": {"$gte": lo, "$lte": hi}}, {"_id": 0}).to_list(9000)
+    by_day = {}
+    for e in entries:
+        d = e["entry_date"][:10]
+        by_day.setdefault(d, {"boxes": 0, "waste": 0.0, "invoiced": 0.0, "collected": 0.0})
+        by_day[d]["boxes"] += e.get("quantity", 0)
+        by_day[d]["waste"] += e.get("waste_kg", 0)
+    for i in invoices:
+        d = i["invoice_date"][:10]
+        by_day.setdefault(d, {"boxes": 0, "waste": 0.0, "invoiced": 0.0, "collected": 0.0})
+        by_day[d]["invoiced"] += i.get("grand_total", 0)
+    for p in payments:
+        d = p["payment_date"][:10]
+        by_day.setdefault(d, {"boxes": 0, "waste": 0.0, "invoiced": 0.0, "collected": 0.0})
+        by_day[d]["collected"] += p.get("amount", 0)
+    daily = [{"date": k, **{kk: round(vv, 2) for kk, vv in v.items()}} for k, v in sorted(by_day.items())]
+    return {
+        "month": month,
+        "total_boxes": sum(e.get("quantity", 0) for e in entries),
+        "total_waste": round(sum(e.get("waste_kg", 0) for e in entries), 2),
+        "total_invoiced": round(sum(i.get("grand_total", 0) for i in invoices), 2),
+        "total_collected": round(sum(p.get("amount", 0) for p in payments), 2),
+        "invoice_count": len(invoices),
+        "outstanding": round(sum(i.get("balance", 0) for i in invoices), 2),
+        "daily": daily,
+    }
+
+@api_router.get("/inventory")
+async def inventory_dashboard(user: dict = Depends(get_current_user)):
+    shops = await db.shops.find({}, {"_id": 0}).to_list(1000)
+    entries = await db.entries.find({}, {"_id": 0}).to_list(9000)
+    agg = {}
+    for e in entries:
+        sid = e["shop_id"]
+        agg.setdefault(sid, {"boxes": 0, "waste": 0.0, "last": None, "count": 0})
+        agg[sid]["boxes"] += e.get("quantity", 0)
+        agg[sid]["waste"] += e.get("waste_kg", 0)
+        agg[sid]["count"] += 1
+        d = e["entry_date"]
+        if not agg[sid]["last"] or d > agg[sid]["last"]:
+            agg[sid]["last"] = d
+    rows = []
+    for s in shops:
+        a = agg.get(s["id"], {"boxes": 0, "waste": 0.0, "last": None, "count": 0})
+        rows.append({
+            "shop_no": s["shop_no"], "name": s["name"], "location": s.get("location", ""),
+            "cycle_days": s.get("cycle_days", 5),
+            "total_boxes": a["boxes"], "total_waste": round(a["waste"], 2),
+            "entries": a["count"], "last_entry": a["last"],
+        })
+    rows.sort(key=lambda r: r["total_boxes"], reverse=True)
+    return {
+        "total_boxes": sum(r["total_boxes"] for r in rows),
+        "total_waste": round(sum(r["total_waste"] for r in rows), 2),
+        "active_shops": len([r for r in rows if r["entries"] > 0]),
+        "rows": rows,
+    }
+
+# ---------------- Bulk shop import ----------------
+@api_router.post("/shops/import")
+async def import_shops(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
+    content = await file.read()
+    updated, created, errors = 0, 0, []
+    rows = []
+    name = (file.filename or "").lower()
+    try:
+        if name.endswith(".csv"):
+            text = content.decode("utf-8", errors="ignore")
+            lines = [l for l in text.splitlines() if l.strip()]
+            if lines:
+                headers = [h.strip().lower() for h in lines[0].split(",")]
+                for line in lines[1:]:
+                    vals = line.split(",")
+                    rows.append({headers[i]: vals[i].strip() if i < len(vals) else "" for i in range(len(headers))})
+        else:
+            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
+            ws = wb.active
+            data = list(ws.iter_rows(values_only=True))
+            if data:
+                headers = [str(h).strip().lower() if h is not None else "" for h in data[0]]
+                for r in data[1:]:
+                    rows.append({headers[i]: (str(r[i]).strip() if i < len(r) and r[i] is not None else "") for i in range(len(headers))})
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not parse file: {e}")
+
+    def pick(row, *keys):
+        for k in keys:
+            if k in row and row[k]:
+                return row[k]
+        return ""
+
+    for row in rows:
+        shop_no = pick(row, "shop_no", "shop no", "shopno", "shop number")
+        if not shop_no:
+            continue
+        supervisor = pick(row, "supervisor", "supervisor name", "incharge")
+        contact = pick(row, "contact", "phone", "mobile", "contact no")
+        existing = await db.shops.find_one({"shop_no": shop_no})
+        update = {}
+        if supervisor:
+            update["supervisor"] = supervisor
+        if contact:
+            update["contact"] = contact
+        if existing:
+            if update:
+                await db.shops.update_one({"shop_no": shop_no}, {"$set": update})
+                updated += 1
+        else:
+            new_shop = Shop(shop_no=shop_no, name=pick(row, "name", "shop name") or f"TASMAC {shop_no}",
+                            district=pick(row, "district"), location=pick(row, "location"),
+                            supervisor=supervisor, contact=contact)
+            await db.shops.insert_one(new_shop.model_dump())
+            created += 1
+    return {"updated": updated, "created": created, "processed": len(rows)}
+
+# ---------------- Email (Resend managed) ----------------
+EMAIL_BASE_URL = "https://integrations.emergentagent.com"
+EMAIL_KEY = os.environ.get("EMERGENT_EMAIL_KEY", "")
+EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "Auro Products")
+
+_SHORTENERS = ("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "goo.gl", "rebrand.ly")
+_CRED_ASK = ("reply with your password", "reply with the code", "send your password", "cvv",
+             "send us your password", "enter your password below", "confirm your card number",
+             "your full card number", "seed phrase", "recovery phrase", "verify your card",
+             "social security number", "confirm your bank details")
+_HOSTISH = re.compile(r"\b(?:https?://)?((?:[a-z0-9-]+\.)+[a-z]{2,})", re.I)
+
+def _host_ok(host: str) -> bool:
+    if not host or "xn--" in host:
+        return False
+    try:
+        ipaddress.ip_address(host)
+        return False
+    except ValueError:
+        pass
+    return not any(host == s or host.endswith("." + s) for s in _SHORTENERS)
+
+def _same_site(shown: str, real: str) -> bool:
+    return shown == real or real.endswith("." + shown) or shown.endswith("." + real)
+
+class _EmailScan(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.tags, self.urls, self.anchors = set(), [], []
+        self._href, self._text = None, []
+    def handle_starttag(self, tag, attrs):
+        self.tags.add(tag.lower())
+        self.urls += [v for k, v in attrs if k.lower() in ("href", "src") and v]
+        if tag.lower() == "a":
+            self._href = dict((k.lower(), v) for k, v in attrs).get("href")
+            self._text = []
+    def handle_data(self, data):
+        if self._href is not None:
+            self._text.append(data)
+    def handle_endtag(self, tag):
+        if tag.lower() == "a" and self._href is not None:
+            self.anchors.append((self._href, "".join(self._text)))
+            self._href, self._text = None, []
+
+def _assert_safe_email(subject: str, html: str) -> None:
+    scan = _EmailScan(); scan.feed(html)
+    if scan.tags & {"form", "input", "textarea", "select"}:
+        raise ValueError("No forms or input fields in email (G2)")
+    body = f"{subject}\n{html}".lower()
+    for p in _CRED_ASK:
+        if p in body:
+            raise ValueError(f"Email asks the recipient for credentials: {p!r} (G2)")
+    for url in scan.urls:
+        low = url.strip().lower()
+        if low.startswith(("mailto:", "tel:", "cid:", "#")):
+            continue
+        if not low.startswith("https://"):
+            raise ValueError(f"Email links/assets must be absolute https: {url!r} (G3)")
+        host = urlparse(low).hostname or ""
+        if not _host_ok(host) or urlparse(low).username is not None:
+            raise ValueError(f"Shortened, numeric-host or credential-bearing URL: {url!r} (G3)")
+    for href, text in scan.anchors:
+        real = urlparse(href.strip().lower()).hostname or ""
+        if not real:
+            continue
+        for m in _HOSTISH.finditer(text):
+            if not _same_site(m.group(1).lower(), real):
+                raise ValueError(f"Anchor text {m.group(1)!r} != real link host {real!r} (G3)")
+
+async def send_email(*, to: str, subject: str, html: str) -> Optional[str]:
+    if not EMAIL_KEY:
+        logger.warning("EMERGENT_EMAIL_KEY not set; skipping email")
+        return None
+    _assert_safe_email(subject, html)
+    payload = {"to": [to], "subject": subject, "html": html, "from_name": EMAIL_FROM_NAME}
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.post(f"{EMAIL_BASE_URL}/api/v1/email/send",
+                                 headers={"X-Email-Key": EMAIL_KEY}, json=payload)
+    resp.raise_for_status()
+    return resp.json().get("id")
+
+# ---------------- WhatsApp / SMS (Twilio, optional) ----------------
+def send_whatsapp_sms(to_number: str, message: str) -> dict:
+    sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    wa_from = os.environ.get("TWILIO_WHATSAPP_FROM", "")
+    sms_from = os.environ.get("TWILIO_SMS_FROM", "")
+    if not (sid and token and to_number):
+        return {"sent": False, "reason": "twilio_not_configured"}
+    try:
+        from twilio.rest import Client
+        client = Client(sid, token)
+        result = {}
+        if wa_from:
+            m = client.messages.create(from_=f"whatsapp:{wa_from}", to=f"whatsapp:{to_number}", body=message)
+            result["whatsapp_sid"] = m.sid
+        if sms_from:
+            m = client.messages.create(from_=sms_from, to=to_number, body=message)
+            result["sms_sid"] = m.sid
+        result["sent"] = bool(result)
+        return result
+    except Exception as e:
+        logger.error(f"Twilio send failed: {e}")
+        return {"sent": False, "reason": str(e)}
+
+async def build_due_reminders() -> list:
+    shops = await db.shops.find({"active": True}, {"_id": 0}).to_list(1000)
+    entries = await db.entries.find({}, {"_id": 0}).to_list(9000)
+    last_by_shop = {}
+    for e in entries:
+        sid = e["shop_id"]; d = parse_iso(e["entry_date"])
+        if sid not in last_by_shop or d > last_by_shop[sid]:
+            last_by_shop[sid] = d
+    today = datetime.now(timezone.utc).date()
+    due = []
+    for s in shops:
+        last = last_by_shop.get(s["id"])
+        if not last:
+            continue
+        next_date = (last + timedelta(days=s.get("cycle_days", 5))).date()
+        if next_date <= today:
+            due.append({"shop_no": s["shop_no"], "name": s["name"], "location": s.get("location", ""),
+                        "next": next_date.isoformat(), "overdue_days": (today - next_date).days})
+    due.sort(key=lambda r: r["overdue_days"], reverse=True)
+    return due
+
+async def run_reminder_job():
+    try:
+        settings = await get_settings_doc()
+        due = await build_due_reminders()
+        if not due:
+            logger.info("Reminder job: no shops due")
+            return
+        lines = "".join(
+            f'<tr><td style="padding:6px 10px;border:1px solid #ddd">{escape(d["shop_no"])}</td>'
+            f'<td style="padding:6px 10px;border:1px solid #ddd">{escape(d["name"])} — {escape(d["location"])}</td>'
+            f'<td style="padding:6px 10px;border:1px solid #ddd">{escape(str(d["next"]))}</td>'
+            f'<td style="padding:6px 10px;border:1px solid #ddd">{d["overdue_days"]}d</td></tr>'
+            for d in due[:100]
+        )
+        html = (f'<table role="presentation" width="100%"><tr><td style="padding:20px;font-family:Arial,sans-serif">'
+                f'<h2 style="margin:0 0 8px">Cotton Box Pickup Reminders</h2>'
+                f'<p>{len(due)} shop(s) are due or overdue for a cotton box pickup today.</p>'
+                f'<table style="border-collapse:collapse;font-size:13px"><tr>'
+                f'<th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Shop</th>'
+                f'<th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Location</th>'
+                f'<th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Due Date</th>'
+                f'<th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Overdue</th></tr>{lines}</table>'
+                f'<p style="font-size:12px;color:#888;margin-top:16px">Sent by {escape(EMAIL_FROM_NAME)} · Built by R I Billing Pro. '
+                f'We never ask for your password or card details by email.</p></td></tr></table>')
+        email_to = settings.get("reminder_email") or os.environ.get("ADMIN_EMAIL")
+        if email_to:
+            try:
+                await send_email(to=email_to, subject=f"{len(due)} cotton box pickups due today", html=html)
+            except Exception as e:
+                logger.error(f"Reminder email failed: {e}")
+        wa = settings.get("reminder_whatsapp") or ""
+        if wa:
+            top = "\n".join(f"{d['shop_no']} {d['name']} (due {d['next']})" for d in due[:15])
+            send_whatsapp_sms(wa, f"Auro Products: {len(due)} cotton box pickups due today.\n{top}")
+    except Exception as e:
+        logger.error(f"Reminder job error: {e}")
+
+@api_router.post("/reminders/run")
+async def trigger_reminders(background: BackgroundTasks, user: dict = Depends(get_current_user)):
+    due = await build_due_reminders()
+    background.add_task(lambda: None)
+    await run_reminder_job()
+    return {"triggered": True, "due_count": len(due)}
+
+@api_router.post("/cron/reminders")
+async def cron_reminders(request: Request, background: BackgroundTasks, authorization: str = Header(None)):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    secret = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    token = (authorization or "").replace("Bearer ", "").strip()
+    if not secret or not hmac.compare_digest(token, secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    background.add_task(run_reminder_job)
+    return {"accepted": True}
 
 app.include_router(api_router)
 

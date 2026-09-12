@@ -1,0 +1,9 @@
+crons:
+  - name: daily-pickup-remind
+    description: "Sends daily cotton box pickup reminders (email + WhatsApp) for overdue/due shops at 9am IST"
+    cron: "0 9 * * *"
+    timezone: "Asia/Kolkata"
+    endpoint: "{{BASE_URL}}/api/cron/reminders"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

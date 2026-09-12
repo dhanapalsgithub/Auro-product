@@ -13,6 +13,9 @@ import InvoiceView from "@/pages/InvoiceView";
 import WasteAnalytics from "@/pages/WasteAnalytics";
 import CalendarPage from "@/pages/CalendarPage";
 import Settings from "@/pages/Settings";
+import Inventory from "@/pages/Inventory";
+import Payments from "@/pages/Payments";
+import Reports from "@/pages/Reports";
 
 function App() {
   return (
@@ -35,6 +38,9 @@ function App() {
               <Route path="/box-entry" element={<BoxEntry />} />
               <Route path="/invoices" element={<Invoices />} />
               <Route path="/invoices/:id" element={<InvoiceView />} />
+              <Route path="/inventory" element={<Inventory />} />
+              <Route path="/payments" element={<Payments />} />
+              <Route path="/reports" element={<Reports />} />
               <Route path="/waste-analytics" element={<WasteAnalytics />} />
               <Route path="/calendar" element={<CalendarPage />} />
               <Route path="/settings" element={<Settings />} />

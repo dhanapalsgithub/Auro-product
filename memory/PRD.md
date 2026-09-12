@@ -31,6 +31,20 @@ Single operator/admin managing the cotton box tender across 149 TASMAC shops —
 - Settings page (company/tax/bank/terms) with persistence.
 - Verified 100% by testing agent (16/16 backend, all frontend flows).
 
+### Iteration 2 (2026-06)
+- Multi-line-item invoices with per-item rate; part payments with status (unpaid/partial/paid).
+- Payments & Ledger page: payment history + per-shop ledger (opening/debit/credit/closing, running balance).
+- Reports page: daily + monthly summaries with charts and CSV export.
+- Inventory dashboard: per-shop boxes/waste/last-entry, searchable + export.
+- Bulk shop import (CSV/XLSX) updating supervisor & contact by shop_no.
+- Invoice UPI QR (qrcode.react) + bank details + "Built by R I Billing Pro" footer; app logo updated to uploaded AP logo (ri-logo.png).
+- Auto reminders: daily 9 AM IST cron (.emergent/crons.yml -> /api/cron/reminders, Bearer WEBHOOK_CRON_SECRET) sending EMAIL via Resend (working) + WhatsApp/SMS via Twilio (activates when TWILIO_* env creds added).
+- Verified 100% by testing agent (26/26 backend, all frontend flows).
+
+## Integrations
+- Resend (Emergent managed) — email reminders. Working, no key needed.
+- Twilio — WhatsApp/SMS reminders. OPTIONAL: needs TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_WHATSAPP_FROM (and/or TWILIO_SMS_FROM) in backend/.env. Currently EMPTY -> WhatsApp/SMS skipped gracefully.
+
 ## Backlog / Remaining
 - **P1**: Multi-line-item invoices; edit existing invoice; supervisor/contact bulk import for shops.
 - **P1**: Real bank details + QR/UPI on invoice; invoice number series config.
