@@ -6,6 +6,7 @@ import Pager from "@/components/Pager";
 import { exportToCsv, fmtDate } from "@/lib/helpers";
 import { toast } from "sonner";
 import { PackagePlus, Scale, Package, Download, Trash2 } from "lucide-react";
+import { BOX_TYPES } from "@/lib/boxTypes";
 
 const PAGE_SIZE = 10;
 
@@ -14,6 +15,7 @@ export default function BoxEntry() {
   const [shops, setShops] = useState([]);
   const [entries, setEntries] = useState([]);
   const [shopId, setShopId] = useState(params.get("shop") || "");
+  const [boxType, setBoxType] = useState(BOX_TYPES[0]);
   const [quantity, setQuantity] = useState("");
   const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState("");
@@ -35,7 +37,7 @@ export default function BoxEntry() {
     if (!shopId || !quantity) { toast.error("Select a shop and enter quantity"); return; }
     setSaving(true);
     try {
-      await api.post("/entries", { shop_id: shopId, quantity: parseInt(quantity), entry_date: new Date(entryDate).toISOString(), notes });
+      await api.post("/entries", { shop_id: shopId, box_type: boxType, quantity: parseInt(quantity), entry_date: new Date(entryDate).toISOString(), notes });
       toast.success("Inventory entry saved — reminder scheduled");
       setQuantity(""); setNotes(""); load();
     } catch (err) { toast.error("Failed to save entry"); }
@@ -49,7 +51,7 @@ export default function BoxEntry() {
 
   const doExport = () => exportToCsv("box-entries.csv", entries, [
     { label: "Date", accessor: (r) => fmtDate(r.entry_date) }, { label: "Shop No", accessor: "shop_no" },
-    { label: "Shop", accessor: "shop_name" }, { label: "Boxes (pcs)", accessor: "quantity" },
+    { label: "Shop", accessor: "shop_name" }, { label: "Box Type", accessor: "box_type" }, { label: "Boxes (pcs)", accessor: "quantity" },
     { label: "Waste (kg)", accessor: "waste_kg" }, { label: "Notes", accessor: "notes" },
   ]);
 
@@ -70,6 +72,13 @@ export default function BoxEntry() {
                 className="mt-1 w-full rounded-xl bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50">
                 <option value="">Select shop…</option>
                 {shops.map((s) => <option key={s.id} value={s.id}>{s.shop_no} · {s.name} ({s.location})</option>)}
+              </select>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs text-slate-500">Box Type</label>
+              <select data-testid="entry-boxtype-select" value={boxType} onChange={(e) => setBoxType(e.target.value)}
+                className="mt-1 w-full rounded-xl bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50">
+                {BOX_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
               </select>
             </div>
             <div>
@@ -110,7 +119,7 @@ export default function BoxEntry() {
           <table className="w-full text-sm" data-testid="entries-table">
             <thead>
               <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wider text-slate-500 font-mono">
-                <th className="p-4">Date</th><th className="p-4">Shop</th><th className="p-4 text-right">Boxes</th><th className="p-4 text-right">Waste (kg)</th><th className="p-4">Notes</th><th className="p-4"></th>
+                <th className="p-4">Date</th><th className="p-4">Shop</th><th className="p-4">Box Type</th><th className="p-4 text-right">Boxes</th><th className="p-4 text-right">Waste (kg)</th><th className="p-4">Notes</th><th className="p-4"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
@@ -118,13 +127,14 @@ export default function BoxEntry() {
                 <tr key={e.id} data-testid={`entry-row-${e.id}`} className="hover:bg-white/5 transition-colors">
                   <td className="p-4 font-mono text-slate-400">{fmtDate(e.entry_date)}</td>
                   <td className="p-4"><span className="text-cyan-300 font-mono">{e.shop_no}</span> · {e.shop_name}</td>
+                  <td className="p-4 text-slate-400">{e.box_type || "—"}</td>
                   <td className="p-4 text-right font-mono">{e.quantity.toLocaleString("en-IN")}</td>
                   <td className="p-4 text-right font-mono text-emerald-300">{e.waste_kg}</td>
                   <td className="p-4 text-slate-400 truncate max-w-[160px]">{e.notes || "—"}</td>
                   <td className="p-4 text-right"><button data-testid={`delete-entry-${e.id}`} onClick={() => del(e.id)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-red-400"><Trash2 className="h-4 w-4" /></button></td>
                 </tr>
               ))}
-              {rows.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-slate-500">No entries yet.</td></tr>}
+              {rows.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-slate-500">No entries yet.</td></tr>}
             </tbody>
           </table>
         </div>

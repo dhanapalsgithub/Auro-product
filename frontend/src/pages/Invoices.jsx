@@ -6,6 +6,7 @@ import Pager from "@/components/Pager";
 import { inr, fmtDate, exportToCsv } from "@/lib/helpers";
 import { toast } from "sonner";
 import { Receipt, Plus, Download, Search, Eye, Trash2, X, IndianRupee, Wallet } from "lucide-react";
+import { BOX_TYPES } from "@/lib/boxTypes";
 
 const PAGE_SIZE = 10;
 const STATUS = {
@@ -13,7 +14,7 @@ const STATUS = {
   partial: "bg-amber-500/15 text-amber-300 border-amber-500/30",
   unpaid: "bg-red-500/15 text-red-300 border-red-500/30",
 };
-const blankItem = () => ({ description: "Cotton Box (Corrugated Paperboard)", hsn: "4819", unit: "PCS", quantity: "", rate: "" });
+const blankItem = () => ({ description: BOX_TYPES[0], hsn: "4819", unit: "PCS", quantity: "", rate: "" });
 
 export default function Invoices() {
   const navigate = useNavigate();
@@ -36,8 +37,15 @@ export default function Invoices() {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [search, start, end]);
   useEffect(() => {
     api.get("/shops").then((r) => setShops(r.data));
-    api.get("/settings").then((r) => { setSettings(r.data); setItems([{ ...blankItem(), rate: String(r.data.default_rate || 16) }]); });
+    api.get("/settings").then((r) => { setSettings(r.data); setItems([{ ...blankItem(), rate: String(r.data.rate_beer || r.data.default_rate || 16) }]); });
   }, []);
+
+  const rateFor = (type) => {
+    const t = (type || "").toLowerCase();
+    if (t.includes("beer")) return settings?.rate_beer ?? settings?.default_rate ?? 16;
+    if (t.includes("brandy")) return settings?.rate_brandy ?? settings?.default_rate ?? 16;
+    return settings?.default_rate ?? 16;
+  };
 
   const pageCount = Math.max(1, Math.ceil(invoices.length / PAGE_SIZE));
   const rows = useMemo(() => invoices.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [invoices, page]);
@@ -48,7 +56,7 @@ export default function Invoices() {
   const total = Math.round(taxable + cgst + sgst);
 
   const setItem = (i, k, v) => setItems((arr) => arr.map((it, idx) => idx === i ? { ...it, [k]: v } : it));
-  const addItem = () => setItems((arr) => [...arr, { ...blankItem(), rate: String(settings?.default_rate || 16) }]);
+  const addItem = () => setItems((arr) => [...arr, { ...blankItem(), rate: String(settings?.rate_beer || settings?.default_rate || 16) }]);
   const removeItem = (i) => setItems((arr) => arr.length === 1 ? arr : arr.filter((_, idx) => idx !== i));
 
   const create = async (e) => {
@@ -158,8 +166,10 @@ export default function Invoices() {
             <div className="mt-1 space-y-2" data-testid="invoice-items">
               {items.map((it, i) => (
                 <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                  <input data-testid={`item-desc-${i}`} value={it.description} onChange={(e) => setItem(i, "description", e.target.value)} placeholder="Description"
-                    className="col-span-5 rounded-lg bg-white/5 border border-white/10 py-2 px-2.5 text-xs outline-none focus:border-cyan-500/50" />
+                  <select data-testid={`item-desc-${i}`} value={BOX_TYPES.includes(it.description) ? it.description : ""} onChange={(e) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, description: e.target.value, rate: String(rateFor(e.target.value)) } : x))}
+                    className="col-span-5 rounded-lg bg-white/5 border border-white/10 py-2 px-2.5 text-xs outline-none focus:border-cyan-500/50">
+                    {BOX_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                  </select>
                   <input data-testid={`item-hsn-${i}`} value={it.hsn} onChange={(e) => setItem(i, "hsn", e.target.value)} placeholder="HSN"
                     className="col-span-2 rounded-lg bg-white/5 border border-white/10 py-2 px-2.5 text-xs outline-none focus:border-cyan-500/50" />
                   <input data-testid={`item-qty-${i}`} type="number" min="0" value={it.quantity} onChange={(e) => setItem(i, "quantity", e.target.value)} placeholder="Qty"

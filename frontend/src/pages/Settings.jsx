@@ -6,11 +6,11 @@ import { Settings as SettingsIcon, Save, Building2, Percent, Landmark, Bell, Sen
 
 const FIELDS = {
   company: [["company_name", "Company Name"], ["gstin", "GSTIN"], ["address", "Address"], ["state", "State"], ["state_code", "State Code"], ["phone", "Phone"], ["email", "Email"], ["tender_ref", "Tender Reference No"]],
-  tax: [["hsn_code", "HSN Code"], ["default_rate", "Default Rate per Box (₹)"], ["cgst_percent", "CGST %"], ["sgst_percent", "SGST %"], ["waste_divisor", "Waste Divisor"]],
+  tax: [["hsn_code", "HSN Code"], ["default_rate", "Default Rate per Box (₹)"], ["rate_beer", "Beer Box Rate (₹)"], ["rate_brandy", "Brandy Box Rate (₹)"], ["cgst_percent", "CGST %"], ["sgst_percent", "SGST %"], ["waste_divisor", "Waste Divisor"]],
   bank: [["bank_name", "Bank Name"], ["account_no", "Account No"], ["ifsc", "IFSC Code"], ["upi_id", "UPI ID (for invoice QR)"]],
   reminder: [["reminder_email", "Reminder Email"], ["reminder_whatsapp", "WhatsApp / Mobile (+91…)"]],
 };
-const NUM = new Set(["default_rate", "cgst_percent", "sgst_percent", "waste_divisor"]);
+const NUM = new Set(["default_rate", "rate_beer", "rate_brandy", "cgst_percent", "sgst_percent", "waste_divisor"]);
 
 function Section({ title, icon: Icon, fields, data, onChange }) {
   return (

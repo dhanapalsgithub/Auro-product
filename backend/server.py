@@ -126,6 +126,7 @@ class BoxEntry(BaseModel):
     shop_id: str
     shop_no: str
     shop_name: str
+    box_type: str = "Beer Bottle Cotton Box"
     quantity: int          # cotton boxes in PCS
     waste_kg: float        # quantity / 12
     entry_date: str        # ISO date
@@ -134,6 +135,7 @@ class BoxEntry(BaseModel):
 
 class BoxEntryCreate(BaseModel):
     shop_id: str
+    box_type: str = "Beer Bottle Cotton Box"
     quantity: int
     entry_date: Optional[str] = None
     notes: str = ""
@@ -162,6 +164,8 @@ class SettingsModel(BaseModel):
     email: str = "bmartbuild4@gmail.com"
     hsn_code: str = "4819"
     default_rate: float = 16.0
+    rate_beer: float = 16.0
+    rate_brandy: float = 18.0
     cgst_percent: float = 9.0
     sgst_percent: float = 9.0
     waste_divisor: int = 12
@@ -191,11 +195,16 @@ async def me(user: dict = Depends(get_current_user)):
 # ---------------- Settings ----------------
 async def get_settings_doc() -> dict:
     doc = await db.settings.find_one({"_id": "singleton"})
+    defaults = SettingsModel().model_dump()
     if not doc:
-        s = SettingsModel().model_dump()
-        s["_id"] = "singleton"
+        s = {**defaults, "_id": "singleton"}
         await db.settings.insert_one(s)
         doc = s
+    else:
+        missing = {k: v for k, v in defaults.items() if k not in doc}
+        if missing:
+            await db.settings.update_one({"_id": "singleton"}, {"$set": missing})
+            doc.update(missing)
     doc.pop("_id", None)
     return doc
 
@@ -275,6 +284,7 @@ async def create_entry(data: BoxEntryCreate, user: dict = Depends(get_current_us
     waste = round(data.quantity / divisor, 2)
     entry = BoxEntry(
         shop_id=shop["id"], shop_no=shop["shop_no"], shop_name=shop["name"],
+        box_type=data.box_type,
         quantity=data.quantity, waste_kg=waste,
         entry_date=data.entry_date or datetime.now(timezone.utc).isoformat(),
         notes=data.notes,
@@ -633,10 +643,19 @@ async def inventory_dashboard(user: dict = Depends(get_current_user)):
             "entries": a["count"], "last_entry": a["last"],
         })
     rows.sort(key=lambda r: r["total_boxes"], reverse=True)
+    type_agg = {}
+    for e in entries:
+        t = e.get("box_type", "Cotton Box")
+        type_agg.setdefault(t, {"boxes": 0, "waste": 0.0})
+        type_agg[t]["boxes"] += e.get("quantity", 0)
+        type_agg[t]["waste"] += e.get("waste_kg", 0)
+    by_type = [{"type": k, "boxes": v["boxes"], "waste": round(v["waste"], 2)} for k, v in type_agg.items()]
+    by_type.sort(key=lambda x: x["boxes"], reverse=True)
     return {
         "total_boxes": sum(r["total_boxes"] for r in rows),
         "total_waste": round(sum(r["total_waste"] for r in rows), 2),
         "active_shops": len([r for r in rows if r["entries"] > 0]),
+        "by_type": by_type,
         "rows": rows,
     }
 

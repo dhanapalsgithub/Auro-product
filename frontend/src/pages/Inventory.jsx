@@ -46,6 +46,25 @@ export default function Inventory() {
         <Stat icon={Store} label="Active Shops" value={data?.active_shops ?? 0} accent="bg-amber-500/15 text-amber-300" />
       </div>
 
+      {(data?.by_type || []).length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6" data-testid="inventory-by-type">
+          {data.by_type.map((t) => (
+            <Card key={t.type} className="p-5" data-testid={`type-card-${t.type.replace(/\s/g, "-")}`}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-xs uppercase tracking-widest text-slate-500 font-mono">{t.type}</p>
+                  <p className="mt-2 font-display text-2xl font-bold">{t.boxes.toLocaleString("en-IN")} <span className="text-sm text-slate-400">pcs</span></p>
+                </div>
+                <div className="text-right">
+                  <p className="text-xs text-slate-500 font-mono">Waste</p>
+                  <p className="mt-1 font-mono font-semibold text-emerald-300">{t.waste} kg</p>
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+
       <Card className="p-4 mb-4">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
