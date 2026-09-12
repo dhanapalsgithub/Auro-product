@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 5 verified end-to-end. Backend: 11/11 pytest passing (new admin dhanapaul2020@gmail.com/dhana@123 login, /api/statement returns opening_balance/rows-with-running-balance/total_debit/total_credit/closing_balance and 404 on unknown shop, /api/analytics/waste returns by_type_month with beer/brandy per month, plus regression on shops(149), dashboard, inventory (by_type), daily/monthly reports, collections, and Brandy box entry waste_kg = qty/12). Frontend: Login with new creds redirects to /dashboard. Light theme confirmed across Dashboard, 149 Wine Shops, Invoices, Payments, Settings (body bg rgb(243,246,251), text rgb(15,23,42) – strong contrast). Sidebar+header are light frosted glass. Waste Analytics shows waste-type-chart with Beer(cyan) vs Brandy(amber) bars in addition to shop + monthly charts (light backgrounds, cartesian grid #e2e8f0). Reports > Statement tab: selected shop TN1001, backend returned opening 0, debit 18880 (AP602), credit 5000 (Cash), closing 13880 – statement-table and statement-closing render correctly; Download PDF click initiates download 'statement-TN1001-2026-08-13_to_2026-09-12.pdf' with no page/JS errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Reports > Statement select", "issues": ["Hydration warning: '<span> cannot be a child of <option>' – emitted by dev-only JSX instrumentation wrapper (x-ve-dynamic span injected into <option>). Non-functional dev warning, same as iteration 4."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iteration5.py", "/app/test_reports/pytest/iter5.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py still ~1100 lines – consider splitting into routers (auth, shops, invoices, payments, reports, statement, analytics).",
+    "statement endpoint iterates opening in-place (works) but relies on sorted date strings; ISO strings are OK but any future non-ISO date would break sorting. Consider parsing to datetime for sort key.",
+    "Reports.jsx has repeated inline classnames for glass inputs; could be extracted to a shared Input component to reduce duplication."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "dhanapaul2020@gmail.com / dhana@123 (working). Bad password returns 401 as expected.",
+  "seed_data_creation": "Created + cleaned up: 1 invoice (1000 pcs @ ₹16 => grand_total 18880) and 1 partial payment (₹5000) for TN1001 to verify statement.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All new iter-5 features (new admin login, light theme, waste by_type_month chart, /statement endpoint + Statement tab with PDF) verified. Only pre-existing dev-time hydration warning about <span> inside <option> from JSX instrumentation – cosmetic, not a bug."
+}

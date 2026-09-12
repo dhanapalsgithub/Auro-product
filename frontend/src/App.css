@@ -2,21 +2,21 @@
 
 /* Liquid glass surfaces */
 .glass {
-    background: rgba(15, 23, 42, 0.6);
-    backdrop-filter: blur(18px) saturate(150%);
-    -webkit-backdrop-filter: blur(18px) saturate(150%);
-    border: 1px solid rgba(255, 255, 255, 0.10);
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37), inset 0 1px 0 0 rgba(255, 255, 255, 0.10);
+    background: rgba(255, 255, 255, 0.62);
+    backdrop-filter: blur(20px) saturate(180%);
+    -webkit-backdrop-filter: blur(20px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.7);
+    box-shadow: 0 10px 30px -12px rgba(15, 23, 42, 0.18), inset 0 1px 0 0 rgba(255, 255, 255, 0.85);
 }
 
 .glass-soft {
-    background: rgba(15, 23, 42, 0.45);
-    backdrop-filter: blur(12px) saturate(140%);
-    -webkit-backdrop-filter: blur(12px) saturate(140%);
-    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.45);
+    backdrop-filter: blur(14px) saturate(160%);
+    -webkit-backdrop-filter: blur(14px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.55);
 }
 
-.glow-cyan { box-shadow: 0 0 24px rgba(6, 182, 212, 0.18); }
+.glow-cyan { box-shadow: 0 0 24px rgba(6, 182, 212, 0.14); }
 
 .aurora {
     position: fixed;
@@ -30,11 +30,26 @@
     position: absolute;
     width: 55vw; height: 55vw;
     border-radius: 50%;
-    filter: blur(120px);
-    opacity: 0.28;
+    filter: blur(130px);
+    opacity: 0.35;
 }
-.aurora::before { background: #06b6d4; top: -15%; left: -10%; animation: float1 18s ease-in-out infinite; }
-.aurora::after  { background: #10b981; bottom: -20%; right: -10%; animation: float2 22s ease-in-out infinite; }
+.aurora::before { background: #67e8f9; top: -18%; left: -12%; animation: float1 18s ease-in-out infinite; }
+.aurora::after  { background: #6ee7b7; bottom: -22%; right: -12%; animation: float2 22s ease-in-out infinite; }
+
+/* ---------- Light theme utility overrides ---------- */
+.bg-white\/5 { background-color: rgba(15, 23, 42, 0.035) !important; }
+.hover\:bg-white\/5:hover { background-color: rgba(15, 23, 42, 0.05) !important; }
+.hover\:bg-white\/10:hover { background-color: rgba(15, 23, 42, 0.07) !important; }
+.border-white\/10 { border-color: rgba(15, 23, 42, 0.10) !important; }
+.divide-white\/5 > :not([hidden]) ~ :not([hidden]) { border-color: rgba(15, 23, 42, 0.07) !important; }
+.text-slate-100 { color: #0f172a !important; }
+.text-slate-300 { color: #334155 !important; }
+.text-slate-400 { color: #475569 !important; }
+.text-cyan-300, .text-cyan-400 { color: #0e7490 !important; }
+.text-emerald-300 { color: #059669 !important; }
+.text-red-300 { color: #dc2626 !important; }
+.text-amber-300 { color: #b45309 !important; }
+.text-blue-300 { color: #2563eb !important; }
 
 @keyframes float1 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(6%,8%)} }
 @keyframes float2 { 0%,100%{transform:translate(0,0)} 50%{transform:translate(-6%,-8%)} }

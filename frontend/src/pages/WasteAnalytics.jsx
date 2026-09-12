@@ -3,7 +3,7 @@ import api from "@/lib/apiClient";
 import { PageHeader, Card } from "@/components/Shell";
 import { exportToCsv } from "@/lib/helpers";
 import { Scale, Download } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LineChart, Line } from "recharts";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LineChart, Line, Legend } from "recharts";
 
 export default function WasteAnalytics() {
   const [data, setData] = useState(null);
@@ -11,6 +11,7 @@ export default function WasteAnalytics() {
 
   const byShop = (data?.by_shop || []).slice(0, 10);
   const byMonth = data?.by_month || [];
+  const byTypeMonth = data?.by_type_month || [];
   const totalWaste = (data?.by_shop || []).reduce((s, r) => s + r.waste, 0);
   const totalBoxes = (data?.by_shop || []).reduce((s, r) => s + r.boxes, 0);
 
@@ -36,10 +37,10 @@ export default function WasteAnalytics() {
         <div style={{ width: "100%", height: 320 }} data-testid="waste-shop-chart">
           <ResponsiveContainer>
             <BarChart data={byShop} margin={{ left: -10, right: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="shop" tick={{ fill: "#64748b", fontSize: 10 }} angle={-25} textAnchor="end" height={70} interval={0} />
               <YAxis tick={{ fill: "#64748b", fontSize: 11 }} />
-              <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 12, color: "#fff" }} />
+              <Tooltip contentStyle={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, color: "#0f172a" }} />
               <Bar dataKey="waste" fill="#10b981" radius={[6, 6, 0, 0]} name="Waste (kg)" />
             </BarChart>
           </ResponsiveContainer>
@@ -51,12 +52,29 @@ export default function WasteAnalytics() {
         <div style={{ width: "100%", height: 280 }} data-testid="waste-month-chart">
           <ResponsiveContainer>
             <LineChart data={byMonth} margin={{ left: -10, right: 10 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
               <XAxis dataKey="month" tick={{ fill: "#64748b", fontSize: 11 }} />
               <YAxis tick={{ fill: "#64748b", fontSize: 11 }} />
-              <Tooltip contentStyle={{ background: "#0f172a", border: "1px solid #1e293b", borderRadius: 12, color: "#fff" }} />
+              <Tooltip contentStyle={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, color: "#0f172a" }} />
               <Line type="monotone" dataKey="waste" stroke="#06b6d4" strokeWidth={2.5} dot={{ fill: "#06b6d4" }} name="Waste (kg)" />
             </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+
+      <Card className="p-5 mt-6">
+        <h2 className="font-display text-lg font-semibold mb-4">Beer vs Brandy Box Waste by Month</h2>
+        <div style={{ width: "100%", height: 300 }} data-testid="waste-type-chart">
+          <ResponsiveContainer>
+            <BarChart data={byTypeMonth} margin={{ left: -10, right: 10 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+              <XAxis dataKey="month" tick={{ fill: "#64748b", fontSize: 11 }} />
+              <YAxis tick={{ fill: "#64748b", fontSize: 11 }} />
+              <Tooltip contentStyle={{ background: "#ffffff", border: "1px solid #e2e8f0", borderRadius: 12, color: "#0f172a" }} />
+              <Legend />
+              <Bar dataKey="beer" fill="#06b6d4" radius={[6, 6, 0, 0]} name="Beer Box Waste (kg)" />
+              <Bar dataKey="brandy" fill="#f59e0b" radius={[6, 6, 0, 0]} name="Brandy Box Waste (kg)" />
+            </BarChart>
           </ResponsiveContainer>
         </div>
       </Card>

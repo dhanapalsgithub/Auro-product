@@ -462,6 +462,7 @@ async def waste_analytics(user: dict = Depends(get_current_user)):
     entries = await db.entries.find({}, {"_id": 0}).to_list(5000)
     by_shop = {}
     by_month = {}
+    by_type_month = {}
     for e in entries:
         key = e["shop_no"] + " - " + e["shop_name"]
         by_shop.setdefault(key, {"boxes": 0, "waste": 0.0})
@@ -471,10 +472,17 @@ async def waste_analytics(user: dict = Depends(get_current_user)):
         by_month.setdefault(month, {"boxes": 0, "waste": 0.0})
         by_month[month]["boxes"] += e.get("quantity", 0)
         by_month[month]["waste"] += e.get("waste_kg", 0)
+        t = (e.get("box_type") or "").lower()
+        by_type_month.setdefault(month, {"beer": 0.0, "brandy": 0.0})
+        if "brandy" in t:
+            by_type_month[month]["brandy"] += e.get("waste_kg", 0)
+        else:
+            by_type_month[month]["beer"] += e.get("waste_kg", 0)
     shop_rows = [{"shop": k, "boxes": v["boxes"], "waste": round(v["waste"], 2)} for k, v in by_shop.items()]
     shop_rows.sort(key=lambda x: x["waste"], reverse=True)
     month_rows = [{"month": k, "boxes": v["boxes"], "waste": round(v["waste"], 2)} for k, v in sorted(by_month.items())]
-    return {"by_shop": shop_rows, "by_month": month_rows}
+    type_month_rows = [{"month": k, "beer": round(v["beer"], 2), "brandy": round(v["brandy"], 2)} for k, v in sorted(by_type_month.items())]
+    return {"by_shop": shop_rows, "by_month": month_rows, "by_type_month": type_month_rows}
 
 # ---------------- Payments & Ledger ----------------
 async def recompute_invoice(invoice_id: str):
@@ -979,6 +987,48 @@ async def collections(user: dict = Depends(get_current_user)):
         "shops_with_dues": len(rows),
         "total_paid": round(sum(r["paid"] for r in rows), 2),
         "rows": rows,
+    }
+
+# ---------------- Account statement (per shop, date range) ----------------
+@api_router.get("/statement/{shop_id}")
+async def account_statement(shop_id: str, start: str = "", end: str = "", user: dict = Depends(get_current_user)):
+    shop = await db.shops.find_one({"id": shop_id}, {"_id": 0})
+    if not shop:
+        raise HTTPException(status_code=404, detail="Shop not found")
+    opening = shop.get("opening_balance", 0.0)
+    invoices = await db.invoices.find({"shop_id": shop_id}, {"_id": 0}).to_list(3000)
+    payments = await db.payments.find({"shop_id": shop_id}, {"_id": 0}).to_list(3000)
+    end_cut = (end + "T23:59:59") if end else None
+    rows = []
+    op = opening
+
+    def add(dt, typ, ref, part, debit, credit):
+        nonlocal op
+        if start and dt < start:
+            op += debit - credit
+            return
+        if end_cut and dt > end_cut:
+            return
+        rows.append({"date": dt, "type": typ, "ref": ref, "particulars": part, "debit": debit, "credit": credit})
+
+    for inv in invoices:
+        add(inv["invoice_date"], "invoice", inv["invoice_no"], f"Invoice {inv['invoice_no']}", inv["grand_total"], 0)
+    for p in payments:
+        add(p["payment_date"], "payment", p.get("invoice_no", ""), f"Payment ({p['mode']})", 0, p["amount"])
+    rows.sort(key=lambda x: x["date"])
+    bal = op
+    for r in rows:
+        bal += r["debit"] - r["credit"]
+        r["balance"] = round(bal, 2)
+    td = round(sum(r["debit"] for r in rows), 2)
+    tc = round(sum(r["credit"] for r in rows), 2)
+    settings = await get_settings_doc()
+    return {
+        "shop": {"shop_no": shop["shop_no"], "name": shop["name"], "location": shop.get("location", "")},
+        "seller": {"name": settings.get("company_name"), "gstin": settings.get("gstin"), "address": settings.get("address")},
+        "start": start, "end": end,
+        "opening_balance": round(op, 2), "rows": rows,
+        "total_debit": td, "total_credit": tc, "closing_balance": round(op + td - tc, 2),
     }
 
 app.include_router(api_router)

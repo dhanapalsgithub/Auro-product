@@ -77,7 +77,7 @@ export default function Layout() {
     <div className="relative min-h-screen">
       <div className="aurora" />
       <div className="relative z-10 flex min-h-screen">
-        <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-white/10 bg-[rgba(10,15,29,0.9)] backdrop-blur-xl">
+        <aside className="hidden lg:flex w-64 shrink-0 flex-col border-r border-white/10 bg-[rgba(255,255,255,0.7)] backdrop-blur-xl">
           <Brand />
           <div className="py-4 flex-1 overflow-y-auto"><NavList /></div>
           <div className="p-4 border-t border-white/10 space-y-3">
@@ -92,7 +92,7 @@ export default function Layout() {
         {open && (
           <div className="fixed inset-0 z-50 lg:hidden">
             <div className="absolute inset-0 bg-black/70" onClick={() => setOpen(false)} />
-            <aside className="absolute left-0 top-0 h-full w-64 bg-[rgba(10,15,29,0.97)] backdrop-blur-xl border-r border-white/10 flex flex-col">
+            <aside className="absolute left-0 top-0 h-full w-64 bg-[rgba(255,255,255,0.92)] backdrop-blur-xl border-r border-white/10 flex flex-col">
               <div className="flex items-center justify-between px-5 h-16 border-b border-white/10">
                 <span className="font-display font-bold">Auro Products</span>
                 <button onClick={() => setOpen(false)}><X className="h-5 w-5" /></button>
@@ -104,7 +104,7 @@ export default function Layout() {
         )}
 
         <div className="flex-1 flex flex-col min-w-0">
-          <header className="sticky top-0 z-40 flex h-16 items-center gap-4 border-b border-white/10 bg-[rgba(15,23,42,0.75)] backdrop-blur-xl px-4 md:px-6">
+          <header className="sticky top-0 z-40 flex h-16 items-center gap-4 border-b border-white/10 bg-[rgba(255,255,255,0.72)] backdrop-blur-xl px-4 md:px-6">
             <button className="lg:hidden" onClick={() => setOpen(true)} data-testid="menu-toggle">
               <Menu className="h-6 w-6" />
             </button>
