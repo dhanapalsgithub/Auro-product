@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 3 full backend + frontend E2E. Backend: 13/13 pytest cases pass in test_iteration3.py (auth/no-auth on /api/overdue-nudge/run returning {triggered, nudge_count}; /api/cron/overdue-nudge: 401 without Bearer, 401 with wrong Bearer, 200 {accepted:true} with correct WEBHOOK_CRON_SECRET; /api/collections returns {total_outstanding, shops_with_dues, total_paid, rows} with outstanding = opening + invoiced - paid, sorted desc; created invoice qty 2500 @ 16 = ₹47,200.00, partial payment ₹10,000, TN1001 outstanding = ₹37,200.00 verified; regression: reports daily/monthly, inventory, invoices, payments all 200). Frontend E2E: login OK; all 11 nav items present including new nav-collections; Collections page renders 3 stat cards, collections-table, collections-search-input, export-collections-button; TN1001 row shows Opening ₹0.00 / Invoiced ₹47,200.00 / Paid ₹10,000.00 / Outstanding ₹37,200.00 matching backend; collect-TN1001 navigates to /payments?shop=<id>; invoice detail page renders 'Download PDF' (data-testid download-invoice-pdf) — click triggered download of 'AP602.pdf' with zero JS/console errors; Reports Monthly tab: 'PDF' (download-monthly-pdf) triggered download of 'monthly-report-2026-09.pdf' with zero JS errors; 'CSV' button present. Layout footer 'Built by R I Billing Pro' still shown. No overlay/z-index/contrast issues detected.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iteration3.py",
+    "/app/backend/tests/test_iteration2.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/iteration3.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py /api/overdue-nudge/run (line 917) awaits run_overdue_nudge() inline so request blocks ~1-2s while Resend email is sent. Consider BackgroundTasks like the cron variant. Non-blocking.",
+    "pdf.js downloadElementPdf: silently returns if element id not found (no error toast). If a user clicks Download PDF before content fully hydrated, they get no feedback. Minor UX.",
+    "pdf.js uses html2canvas single-shot capture and then slices across pages by negative y-offset — works but content on page boundaries may be split mid-row. Acceptable for MVP.",
+    "GET /api/collections loads all invoices/payments in memory (to_list(9000)); fine for 149 shops but should paginate/aggregate in DB if volume grows.",
+    "Collections.jsx has no loading state — before /collections resolves, all stat cards show ₹0.00 which could be mistaken for real data. Minor.",
+    "CORS still allow_credentials=True with allow_origins from env defaulting to '*' — same non-blocking spec violation as iteration_2."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration3.py",
+    "/app/test_reports/iteration_3.json"
+  ],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100%"},
+  "test_credentials": "bmartbuild4@gmail.com / auro@2026 (from /app/memory/test_credentials.md); Cron secret WEBHOOK_CRON_SECRET verified.",
+  "seed_data_creation": "Created 1 invoice AP602 (₹47,200) and 1 partial payment (₹10,000) against TN1001 for testing Collections UI and PDF download; both deleted after tests (payment DELETE 200, invoice DELETE 200). Backend pytest also creates + cleans up its own invoice/payment.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "New iteration-3 testids all wired and verified: nav-collections, collections-table, collections-search-input, export-collections-button, collection-row-<shopno>, collect-<shopno>, download-invoice-pdf, download-monthly-pdf. Backend routes: GET /api/collections, POST /api/overdue-nudge/run (JWT auth), POST /api/cron/overdue-nudge (Bearer WEBHOOK_CRON_SECRET). Note: invoice item field is 'quantity' NOT 'qty'. Delete API accepts /api/payments/<id> and /api/invoices/<id>. Iteration 1 & 2 regressions still pass.",
+  "rca of the issue": "No unresolved issues."
+}

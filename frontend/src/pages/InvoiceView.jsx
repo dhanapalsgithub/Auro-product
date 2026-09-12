@@ -2,8 +2,9 @@ import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import api from "@/lib/apiClient";
 import { fmtDate } from "@/lib/helpers";
+import { downloadElementPdf } from "@/lib/pdf";
 import { QRCodeCanvas } from "qrcode.react";
-import { ArrowLeft, Printer, Loader2 } from "lucide-react";
+import { ArrowLeft, Printer, Loader2, Download } from "lucide-react";
 
 function numToWords(num) {
   const a = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
@@ -45,8 +46,11 @@ export default function InvoiceView() {
         <button data-testid="back-to-invoices" onClick={() => navigate("/invoices")} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 transition">
           <ArrowLeft className="h-4 w-4" /> Back
         </button>
-        <button data-testid="print-invoice-button" onClick={() => window.print()} className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 px-5 py-2 text-sm font-semibold text-slate-900 active:scale-95 transition">
-          <Printer className="h-4 w-4" /> Print / Save PDF
+        <button data-testid="print-invoice-button" onClick={() => window.print()} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-5 py-2 text-sm hover:bg-white/10 transition">
+          <Printer className="h-4 w-4" /> Print
+        </button>
+        <button data-testid="download-invoice-pdf" onClick={() => downloadElementPdf("invoice-print", `${inv.invoice_no}.pdf`, "#ffffff")} className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 px-5 py-2 text-sm font-semibold text-slate-900 active:scale-95 transition">
+          <Download className="h-4 w-4" /> Download PDF
         </button>
       </div>
 

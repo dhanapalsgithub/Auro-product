@@ -877,6 +877,91 @@ async def cron_reminders(request: Request, background: BackgroundTasks, authoriz
     background.add_task(run_reminder_job)
     return {"accepted": True}
 
+# ---------------- Overdue nudge (re-ping shops still overdue >= 2 days) ----------------
+async def run_overdue_nudge():
+    try:
+        settings = await get_settings_doc()
+        due = await build_due_reminders()
+        nudge = [d for d in due if d["overdue_days"] >= 2]
+        if not nudge:
+            logger.info("Overdue nudge: none overdue >= 2 days")
+            return
+        lines = "".join(
+            f'<tr><td style="padding:6px 10px;border:1px solid #ddd">{escape(d["shop_no"])}</td>'
+            f'<td style="padding:6px 10px;border:1px solid #ddd">{escape(d["name"])} — {escape(d["location"])}</td>'
+            f'<td style="padding:6px 10px;border:1px solid #ddd;color:#c00"><b>{d["overdue_days"]} days overdue</b></td></tr>'
+            for d in nudge[:100]
+        )
+        html = (f'<table role="presentation" width="100%"><tr><td style="padding:20px;font-family:Arial,sans-serif">'
+                f'<h2 style="margin:0 0 8px;color:#c00">Still Overdue — Action Needed</h2>'
+                f'<p>{len(nudge)} shop(s) have been overdue for 2 or more days for a cotton box pickup.</p>'
+                f'<table style="border-collapse:collapse;font-size:13px"><tr>'
+                f'<th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Shop</th>'
+                f'<th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Location</th>'
+                f'<th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Status</th></tr>{lines}</table>'
+                f'<p style="font-size:12px;color:#888;margin-top:16px">Sent by {escape(EMAIL_FROM_NAME)} · Built by R I Billing Pro. '
+                f'We never ask for your password or card details by email.</p></td></tr></table>')
+        email_to = settings.get("reminder_email") or os.environ.get("ADMIN_EMAIL")
+        if email_to:
+            try:
+                await send_email(to=email_to, subject=f"{len(nudge)} shops still overdue (2+ days)", html=html)
+            except Exception as e:
+                logger.error(f"Overdue nudge email failed: {e}")
+        wa = settings.get("reminder_whatsapp") or ""
+        if wa:
+            top = "\n".join(f"{d['shop_no']} {d['name']} ({d['overdue_days']}d overdue)" for d in nudge[:15])
+            send_whatsapp_sms(wa, f"Auro Products URGENT: {len(nudge)} shops overdue 2+ days.\n{top}")
+    except Exception as e:
+        logger.error(f"Overdue nudge error: {e}")
+
+@api_router.post("/overdue-nudge/run")
+async def trigger_overdue(user: dict = Depends(get_current_user)):
+    due = await build_due_reminders()
+    nudge = [d for d in due if d["overdue_days"] >= 2]
+    await run_overdue_nudge()
+    return {"triggered": True, "nudge_count": len(nudge)}
+
+@api_router.post("/cron/overdue-nudge")
+async def cron_overdue(request: Request, background: BackgroundTasks, authorization: str = Header(None)):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    secret = os.environ.get("WEBHOOK_CRON_SECRET", "")
+    token = (authorization or "").replace("Bearer ", "").strip()
+    if not secret or not hmac.compare_digest(token, secret):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    background.add_task(run_overdue_nudge)
+    return {"accepted": True}
+
+# ---------------- Collections (outstanding balance per shop) ----------------
+@api_router.get("/collections")
+async def collections(user: dict = Depends(get_current_user)):
+    shops = await db.shops.find({}, {"_id": 0}).to_list(1000)
+    invoices = await db.invoices.find({}, {"_id": 0}).to_list(9000)
+    payments = await db.payments.find({}, {"_id": 0}).to_list(9000)
+    inv_by, pay_by = {}, {}
+    for i in invoices:
+        inv_by[i["shop_id"]] = inv_by.get(i["shop_id"], 0) + i.get("grand_total", 0)
+    for p in payments:
+        pay_by[p["shop_id"]] = pay_by.get(p["shop_id"], 0) + p.get("amount", 0)
+    rows = []
+    for s in shops:
+        opening = s.get("opening_balance", 0.0)
+        invoiced = round(inv_by.get(s["id"], 0), 2)
+        paid = round(pay_by.get(s["id"], 0), 2)
+        outstanding = round(opening + invoiced - paid, 2)
+        if abs(outstanding) < 0.01:
+            continue
+        rows.append({
+            "shop_id": s["id"], "shop_no": s["shop_no"], "name": s["name"], "location": s.get("location", ""),
+            "opening": opening, "invoiced": invoiced, "paid": paid, "outstanding": outstanding,
+        })
+    rows.sort(key=lambda r: r["outstanding"], reverse=True)
+    return {
+        "total_outstanding": round(sum(r["outstanding"] for r in rows), 2),
+        "shops_with_dues": len(rows),
+        "total_paid": round(sum(r["paid"] for r in rows), 2),
+        "rows": rows,
+    }
+
 app.include_router(api_router)
 
 app.add_middleware(

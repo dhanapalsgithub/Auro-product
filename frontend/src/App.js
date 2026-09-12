@@ -16,6 +16,7 @@ import Settings from "@/pages/Settings";
 import Inventory from "@/pages/Inventory";
 import Payments from "@/pages/Payments";
 import Reports from "@/pages/Reports";
+import Collections from "@/pages/Collections";
 
 function App() {
   return (
@@ -40,6 +41,7 @@ function App() {
               <Route path="/invoices/:id" element={<InvoiceView />} />
               <Route path="/inventory" element={<Inventory />} />
               <Route path="/payments" element={<Payments />} />
+              <Route path="/collections" element={<Collections />} />
               <Route path="/reports" element={<Reports />} />
               <Route path="/waste-analytics" element={<WasteAnalytics />} />
               <Route path="/calendar" element={<CalendarPage />} />

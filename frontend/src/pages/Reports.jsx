@@ -3,6 +3,7 @@ import api from "@/lib/apiClient";
 import { PageHeader, Card } from "@/components/Shell";
 import { inr, fmtDate, exportToCsv } from "@/lib/helpers";
 import { FileBarChart, Download, Package, Scale, Receipt, IndianRupee } from "lucide-react";
+import { downloadElementPdf } from "@/lib/pdf";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 
 export default function Reports() {
@@ -53,11 +54,14 @@ export default function Reports() {
       )}
 
       {tab === "monthly" && monthly && (
-        <div data-testid="monthly-report">
+        <div data-testid="monthly-report" id="monthly-report-sheet">
           <div className="flex items-center gap-3 mb-4">
             <label className="text-sm text-slate-400">Month</label>
             <input data-testid="report-month-input" type="month" value={month} onChange={(e) => setMonth(e.target.value)} className="rounded-xl bg-white/5 border border-white/10 py-2 px-3 text-sm outline-none focus:border-cyan-500/50" />
-            <button data-testid="export-monthly-button" onClick={() => exportToCsv(`monthly-${month}.csv`, monthly.daily, [{ label: "Date", accessor: "date" }, { label: "Boxes", accessor: "boxes" }, { label: "Waste", accessor: "waste" }, { label: "Invoiced", accessor: "invoiced" }, { label: "Collected", accessor: "collected" }])} className="ml-auto flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 transition"><Download className="h-4 w-4" /> Export</button>
+            <div className="ml-auto flex items-center gap-2">
+              <button data-testid="download-monthly-pdf" onClick={() => downloadElementPdf("monthly-report-sheet", `monthly-report-${month}.pdf`, "#090d16")} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 transition"><Download className="h-4 w-4" /> PDF</button>
+              <button data-testid="export-monthly-button" onClick={() => exportToCsv(`monthly-${month}.csv`, monthly.daily, [{ label: "Date", accessor: "date" }, { label: "Boxes", accessor: "boxes" }, { label: "Waste", accessor: "waste" }, { label: "Invoiced", accessor: "invoiced" }, { label: "Collected", accessor: "collected" }])} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 transition"><Download className="h-4 w-4" /> CSV</button>
+            </div>
           </div>
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
             <Stat icon={Package} label="Boxes" value={monthly.total_boxes.toLocaleString("en-IN")} accent="bg-cyan-500/15 text-cyan-300" />

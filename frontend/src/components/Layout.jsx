@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import api from "@/lib/apiClient";
 import {
   LayoutDashboard, Store, PackagePlus, Receipt, Scale, Boxes,
-  Calendar, Settings as SettingsIcon, LogOut, Bell, Search, Menu, X, Wallet, FileBarChart,
+  Calendar, Settings as SettingsIcon, LogOut, Bell, Search, Menu, X, Wallet, FileBarChart, Coins,
 } from "lucide-react";
 
 const NAV = [
@@ -14,6 +14,7 @@ const NAV = [
   { name: "Inventory", icon: Boxes, path: "/inventory", tid: "nav-inventory" },
   { name: "GST Invoices", icon: Receipt, path: "/invoices", tid: "nav-invoices" },
   { name: "Payments & Ledger", icon: Wallet, path: "/payments", tid: "nav-payments" },
+  { name: "Collections", icon: Coins, path: "/collections", tid: "nav-collections" },
   { name: "Reports", icon: FileBarChart, path: "/reports", tid: "nav-reports" },
   { name: "Waste Analytics", icon: Scale, path: "/waste-analytics", tid: "nav-waste" },
   { name: "Calendar", icon: Calendar, path: "/calendar", tid: "nav-calendar" },
