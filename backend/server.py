@@ -1,1114 +1,1502 @@
-from dotenv import load_dotenv
-from pathlib import Path
 import os
+import datetime
+import json
+from sqlalchemy.orm import Session
+from datetime import timedelta
+from typing import Optional, Union, List
+from fastapi import FastAPI, HTTPException, Depends, Query, status
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from dotenv import load_dotenv
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, func
+from sqlalchemy.orm import declarative_base
+from sqlalchemy.orm import sessionmaker
+from collections import defaultdict
 
-ROOT_DIR = Path(__file__).parent
-load_dotenv(ROOT_DIR / '.env')
+load_dotenv()
 
-from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request, Header, UploadFile, File, BackgroundTasks
-from starlette.middleware.cors import CORSMiddleware
-from motor.motor_asyncio import AsyncIOMotorClient
-from pydantic import BaseModel, Field
-from typing import List, Optional
-from datetime import datetime, timezone, timedelta, date
-import uuid
-import logging
-import jwt
-import bcrypt
-import hmac
-import io
-import re
-import ipaddress
-import httpx
-from html import escape
-from html.parser import HTMLParser
-from urllib.parse import urlparse
-from bson import ObjectId
-import openpyxl
+DATABASE_URL = os.environ.get("DATABASE_URL") or "postgresql://neondb_owner:npg_T2MhSB8cwrNl@ep-falling-shadow-b395z9yn-pooler.c-4.ap-southeast-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require"
 
-# ---------------- DB ----------------
-mongo_url = os.environ['MONGO_URL']
-client = AsyncIOMotorClient(mongo_url)
-db = client[os.environ['DB_NAME']]
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
 
-app = FastAPI()
-api_router = APIRouter(prefix="/api")
+# --- Database Models ---
+class ShopModel(Base):
+    __tablename__ = "shops"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    shop_no = Column(String, unique=True, index=True, nullable=False)
+    name = Column(String, nullable=False)
+    district = Column(String, nullable=True)
+    location = Column(String, nullable=True)
+    supervisor = Column(String, nullable=True)
+    contact = Column(String, nullable=True)
+    cycle_days = Column(Integer, default=5)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
-JWT_ALGORITHM = "HS256"
+class EntryModel(Base):
+    __tablename__ = "entries"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    shop_id = Column(Integer, ForeignKey("shops.id"), nullable=False)
+    box_type = Column(String, nullable=True)
+    quantity = Column(Integer, nullable=False)
+    waste_kg = Column(Float, nullable=False, default=0.0)
+    entry_date = Column(DateTime, nullable=False, default=datetime.datetime.utcnow)
+    notes = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
-# ---------------- Auth helpers ----------------
-def hash_password(password: str) -> str:
-    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+class InventoryModel(Base):
+    __tablename__ = "inventory"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    item_name = Column(String, nullable=False)
+    category = Column(String, nullable=True)
+    stock_qty = Column(Integer, default=0)
+    unit = Column(String, default="pcs")
+    unit_price = Column(Float, default=0.0)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
-def verify_password(plain: str, hashed: str) -> bool:
-    return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+class InvoiceModel(Base):
+    __tablename__ = "invoices"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    invoice_no = Column(String, unique=True, index=True, nullable=False)
+    shop_id = Column(Integer, ForeignKey("shops.id"), nullable=True)
+    customer_name = Column(String, nullable=False)
+    gstin = Column(String, nullable=True)
+    invoice_type = Column(String, default="SALES")
+    item_description = Column(String, nullable=True)
+    quantity = Column(Float, default=1.0)
+    unit = Column(String, default="pcs")
+    rate = Column(Float, default=0.0)
+    total_amount = Column(Float, default=0.0)
+    tax_amount = Column(Float, default=0.0)
+    taxable_value = Column(Float, default=0.0)
+    cgst_percent = Column(Float, default=2.5)
+    cgst_amount = Column(Float, default=0.0)
+    sgst_percent = Column(Float, default=2.5)
+    sgst_amount = Column(Float, default=0.0)
+    round_off = Column(Float, default=0.0)
+    grand_total = Column(Float, default=0.0)
+    amount_paid = Column(Float, default=0.0)
+    balance = Column(Float, default=0.0)
+    invoice_date = Column(DateTime, default=datetime.datetime.utcnow)
+    status = Column(String, default="Paid")
 
-def get_jwt_secret() -> str:
-    return os.environ["JWT_SECRET"]
+class LedgerModel(Base):
+    __tablename__ = "ledger"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    shop_id = Column(Integer, ForeignKey("shops.id"), nullable=False)
+    invoice_id = Column(Integer, ForeignKey("invoices.id"), nullable=True)
+    amount = Column(Float, nullable=False)
+    transaction_type = Column(String, default="Credit")
+    payment_mode = Column(String, default="UPI")
+    reference_no = Column(String, nullable=True)
+    notes = Column(String, nullable=True)
+    transaction_date = Column(DateTime, default=datetime.datetime.utcnow)
 
-def create_access_token(user_id: str, email: str) -> str:
-    payload = {"sub": user_id, "email": email,
-               "exp": datetime.now(timezone.utc) + timedelta(days=7), "type": "access"}
-    return jwt.encode(payload, get_jwt_secret(), algorithm=JWT_ALGORITHM)
+class CollectionModel(Base):
+    __tablename__ = "collections"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    shop_id = Column(Integer, ForeignKey("shops.id"), nullable=False)
+    collected_amount = Column(Float, nullable=False)
+    collection_date = Column(DateTime, default=datetime.datetime.utcnow)
+    collected_by = Column(String, nullable=True)
+    status = Column(String, default="Completed")
 
-async def get_current_user(request: Request) -> dict:
-    token = None
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
-    if not token:
-        token = request.cookies.get("access_token")
-    if not token:
-        raise HTTPException(status_code=401, detail="Not authenticated")
+class SettingsModel(Base):
+    __tablename__ = "settings"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    key_name = Column(String, unique=True, index=True, nullable=False)
+    key_value = Column(String, nullable=False)
+
+class UserModel(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    password = Column(String, nullable=False)
+    role = Column(String, default="viewer")
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
+Base.metadata.create_all(bind=engine)
+
+def seed_database():
+    db = SessionLocal()
     try:
-        payload = jwt.decode(token, get_jwt_secret(), algorithms=[JWT_ALGORITHM])
-        user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
-        user["id"] = str(user["_id"])
-        user.pop("_id", None)
-        user.pop("password_hash", None)
-        return user
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-# ---------------- Models ----------------
-class LoginInput(BaseModel):
-    email: str
-    password: str
-
-class Shop(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    shop_no: str
-    name: str
-    district: str
-    location: str
-    supervisor: str = ""
-    contact: str = ""
-    cycle_days: int = 5
-    opening_balance: float = 0.0
-    active: bool = True
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-
-class ShopCreate(BaseModel):
-    shop_no: str
-    name: str
-    district: str
-    location: str
-    supervisor: str = ""
-    contact: str = ""
-    cycle_days: int = 5
-    opening_balance: float = 0.0
-
-class ShopUpdate(BaseModel):
-    shop_no: Optional[str] = None
-    name: Optional[str] = None
-    district: Optional[str] = None
-    location: Optional[str] = None
-    supervisor: Optional[str] = None
-    contact: Optional[str] = None
-    cycle_days: Optional[int] = None
-    opening_balance: Optional[float] = None
-    active: Optional[bool] = None
-
-class PaymentCreate(BaseModel):
-    shop_id: str
-    invoice_id: Optional[str] = None
-    amount: float
-    mode: str = "Cash"
-    payment_date: Optional[str] = None
-    notes: str = ""
-
-class BoxEntry(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
-    shop_id: str
-    shop_no: str
-    shop_name: str
-    box_type: str = "Beer Bottle Cotton Box"
-    quantity: int          # cotton boxes in PCS
-    waste_kg: float        # quantity / 12
-    entry_date: str        # ISO date
-    notes: str = ""
-    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-
-class BoxEntryCreate(BaseModel):
-    shop_id: str
-    box_type: str = "Beer Bottle Cotton Box"
-    quantity: int
-    entry_date: Optional[str] = None
-    notes: str = ""
-
-class InvoiceItem(BaseModel):
-    description: str = "Cotton Box (Corrugated Paperboard)"
-    hsn: str = "4819"
-    unit: str = "PCS"
-    quantity: float
-    rate: float
-
-class InvoiceCreate(BaseModel):
-    shop_id: str
-    invoice_date: Optional[str] = None
-    items: List[InvoiceItem]
-    cgst_percent: float = 9.0
-    sgst_percent: float = 9.0
-
-class SettingsModel(BaseModel):
-    company_name: str = "Auro Products"
-    gstin: str = "33AITPM1982E1Z1"
-    address: str = "52 B 52c, Viswas Nagar 2nd Main Road, Tiruchirappalli, Trichy, Tamil Nadu - 625007"
-    state: str = "Tamil Nadu"
-    state_code: str = "33"
-    phone: str = ""
-    email: str = "bmartbuild4@gmail.com"
-    hsn_code: str = "4819"
-    default_rate: float = 16.0
-    rate_beer: float = 16.0
-    rate_brandy: float = 18.0
-    cgst_percent: float = 9.0
-    sgst_percent: float = 9.0
-    waste_divisor: int = 12
-    bank_name: str = ""
-    account_no: str = ""
-    ifsc: str = ""
-    upi_id: str = ""
-    reminder_email: str = "bmartbuild4@gmail.com"
-    reminder_whatsapp: str = ""
-    tender_ref: str = ""
-    terms: str = "Goods once sold will not be taken back. Payment due within 7 days."
-
-# ---------------- Auth endpoints ----------------
-@api_router.post("/auth/login")
-async def login(data: LoginInput):
-    email = data.email.lower().strip()
-    user = await db.users.find_one({"email": email})
-    if not user or not verify_password(data.password, user["password_hash"]):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-    token = create_access_token(str(user["_id"]), email)
-    return {"token": token, "user": {"id": str(user["_id"]), "email": email, "name": user.get("name", "Admin"), "role": user.get("role", "admin")}}
-
-@api_router.get("/auth/me")
-async def me(user: dict = Depends(get_current_user)):
-    return user
-
-# ---------------- Settings ----------------
-async def get_settings_doc() -> dict:
-    doc = await db.settings.find_one({"_id": "singleton"})
-    defaults = SettingsModel().model_dump()
-    if not doc:
-        s = {**defaults, "_id": "singleton"}
-        await db.settings.insert_one(s)
-        doc = s
-    else:
-        missing = {k: v for k, v in defaults.items() if k not in doc}
-        if missing:
-            await db.settings.update_one({"_id": "singleton"}, {"$set": missing})
-            doc.update(missing)
-    doc.pop("_id", None)
-    return doc
-
-@api_router.get("/settings")
-async def read_settings(user: dict = Depends(get_current_user)):
-    return await get_settings_doc()
-
-@api_router.put("/settings")
-async def update_settings(data: SettingsModel, user: dict = Depends(get_current_user)):
-    payload = data.model_dump()
-    await db.settings.update_one({"_id": "singleton"}, {"$set": payload}, upsert=True)
-    return payload
-
-# ---------------- Shops ----------------
-@api_router.get("/shops")
-async def list_shops(search: str = "", district: str = "", user: dict = Depends(get_current_user)):
-    query = {}
-    if search:
-        query["$or"] = [
-            {"shop_no": {"$regex": search, "$options": "i"}},
-            {"name": {"$regex": search, "$options": "i"}},
-            {"location": {"$regex": search, "$options": "i"}},
-            {"district": {"$regex": search, "$options": "i"}},
+        # Seed initial users
+        default_users = [
+            {"email": "dhanapaul2020@gmail.com", "password": "dhana@123", "role": "admin"},
+            {"email": "userone@gmail.com", "password": "0ne@123", "role": "admin"},
+            {"email": "usertwo@gmail.com", "password": "two@123", "role": "viewer"},
+            {"email": "userthree@gmail.com", "password": "three@123", "role": "viewer"},
         ]
-    if district:
-        query["district"] = district
-    shops = await db.shops.find(query, {"_id": 0}).sort("shop_no", 1).to_list(1000)
-    return shops
+        for u_data in default_users:
+            existing_user = db.query(UserModel).filter(UserModel.email == u_data["email"]).first()
+            if not existing_user:
+                db.add(UserModel(**u_data))
+        db.commit()
 
-@api_router.get("/shops/districts")
-async def list_districts(user: dict = Depends(get_current_user)):
-    return await db.shops.distinct("district")
+        if db.query(ShopModel).count() == 0:
+            districts = ["Chennai", "Coimbatore", "Madurai", "Salem", "Trichy"]
+            for i in range(1, 11):
+                shop = ShopModel(
+                    shop_no=f"SHOP-{100+i}",
+                    name=f"Auro Wine Mart {i}",
+                    district=districts[i % len(districts)],
+                    location=f"Area Zone {i}",
+                    supervisor=f"Supervisor {i}",
+                    contact=f"98765432{i:02d}",
+                    cycle_days=5
+                )
+                db.add(shop)
+            db.commit()
 
-@api_router.post("/shops")
-async def create_shop(data: ShopCreate, user: dict = Depends(get_current_user)):
-    shop = Shop(**data.model_dump())
-    await db.shops.insert_one(shop.model_dump())
-    return shop.model_dump()
+        if db.query(SettingsModel).filter(SettingsModel.key_name == "global_opening_balance").count() == 0:
+            db.add(SettingsModel(key_name="global_opening_balance", key_value="0.0"))
+            db.commit()
 
-@api_router.put("/shops/{shop_id}")
-async def update_shop(shop_id: str, data: ShopUpdate, user: dict = Depends(get_current_user)):
-    update = {k: v for k, v in data.model_dump().items() if v is not None}
-    await db.shops.update_one({"id": shop_id}, {"$set": update})
-    doc = await db.shops.find_one({"id": shop_id}, {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Shop not found")
-    return doc
-
-@api_router.delete("/shops/{shop_id}")
-async def delete_shop(shop_id: str, user: dict = Depends(get_current_user)):
-    await db.shops.delete_one({"id": shop_id})
-    return {"ok": True}
-
-# ---------------- Box Entries ----------------
-@api_router.get("/entries")
-async def list_entries(shop_id: str = "", start: str = "", end: str = "", user: dict = Depends(get_current_user)):
-    query = {}
-    if shop_id:
-        query["shop_id"] = shop_id
-    if start or end:
-        rng = {}
-        if start:
-            rng["$gte"] = start
-        if end:
-            rng["$lte"] = end + "T23:59:59"
-        query["entry_date"] = rng
-    entries = await db.entries.find(query, {"_id": 0}).sort("entry_date", -1).to_list(2000)
-    return entries
-
-@api_router.post("/entries")
-async def create_entry(data: BoxEntryCreate, user: dict = Depends(get_current_user)):
-    shop = await db.shops.find_one({"id": data.shop_id}, {"_id": 0})
-    if not shop:
-        raise HTTPException(status_code=404, detail="Shop not found")
-    settings = await get_settings_doc()
-    divisor = settings.get("waste_divisor", 12) or 12
-    waste = round(data.quantity / divisor, 2)
-    entry = BoxEntry(
-        shop_id=shop["id"], shop_no=shop["shop_no"], shop_name=shop["name"],
-        box_type=data.box_type,
-        quantity=data.quantity, waste_kg=waste,
-        entry_date=data.entry_date or datetime.now(timezone.utc).isoformat(),
-        notes=data.notes,
-    )
-    await db.entries.insert_one(entry.model_dump())
-    return entry.model_dump()
-
-@api_router.delete("/entries/{entry_id}")
-async def delete_entry(entry_id: str, user: dict = Depends(get_current_user)):
-    await db.entries.delete_one({"id": entry_id})
-    return {"ok": True}
-
-# ---------------- Invoices ----------------
-async def next_invoice_no() -> str:
-    counter = await db.counters.find_one_and_update(
-        {"_id": "invoice"}, {"$inc": {"seq": 1}}, upsert=True, return_document=True)
-    seq = counter["seq"] if counter and "seq" in counter else 1
-    return f"AP{600 + seq}"
-
-@api_router.get("/invoices")
-async def list_invoices(search: str = "", start: str = "", end: str = "", user: dict = Depends(get_current_user)):
-    query = {}
-    if search:
-        query["$or"] = [
-            {"invoice_no": {"$regex": search, "$options": "i"}},
-            {"shop_name": {"$regex": search, "$options": "i"}},
-            {"shop_no": {"$regex": search, "$options": "i"}},
-        ]
-    if start or end:
-        rng = {}
-        if start:
-            rng["$gte"] = start
-        if end:
-            rng["$lte"] = end + "T23:59:59"
-        query["invoice_date"] = rng
-    invoices = await db.invoices.find(query, {"_id": 0}).sort("created_at", -1).to_list(2000)
-    return invoices
-
-@api_router.get("/invoices/{invoice_id}")
-async def get_invoice(invoice_id: str, user: dict = Depends(get_current_user)):
-    doc = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Invoice not found")
-    return doc
-
-@api_router.post("/invoices")
-async def create_invoice(data: InvoiceCreate, user: dict = Depends(get_current_user)):
-    shop = await db.shops.find_one({"id": data.shop_id}, {"_id": 0})
-    if not shop:
-        raise HTTPException(status_code=404, detail="Shop not found")
-    settings = await get_settings_doc()
-    line_items = []
-    taxable = 0.0
-    for it in data.items:
-        amount = round(it.quantity * it.rate, 2)
-        taxable += amount
-        line_items.append({**it.model_dump(), "amount": amount})
-    taxable = round(taxable, 2)
-    cgst = round(taxable * data.cgst_percent / 100, 2)
-    sgst = round(taxable * data.sgst_percent / 100, 2)
-    total_before_round = taxable + cgst + sgst
-    grand_total = round(total_before_round)
-    round_off = round(grand_total - total_before_round, 2)
-    inv_no = await next_invoice_no()
-    invoice = {
-        "id": str(uuid.uuid4()),
-        "invoice_no": inv_no,
-        "invoice_date": data.invoice_date or datetime.now(timezone.utc).isoformat(),
-        "shop_id": shop["id"],
-        "shop_no": shop["shop_no"],
-        "shop_name": shop["name"],
-        "shop_district": shop.get("district", ""),
-        "shop_location": shop.get("location", ""),
-        "items": line_items,
-        "taxable": taxable,
-        "cgst_percent": data.cgst_percent,
-        "sgst_percent": data.sgst_percent,
-        "cgst": cgst,
-        "sgst": sgst,
-        "round_off": round_off,
-        "grand_total": grand_total,
-        "amount_paid": 0.0,
-        "balance": grand_total,
-        "status": "unpaid",
-        "seller": {
-            "name": settings.get("company_name"),
-            "gstin": settings.get("gstin"),
-            "address": settings.get("address"),
-            "state": settings.get("state"),
-            "state_code": settings.get("state_code"),
-            "phone": settings.get("phone"),
-            "email": settings.get("email"),
-            "bank_name": settings.get("bank_name"),
-            "account_no": settings.get("account_no"),
-            "ifsc": settings.get("ifsc"),
-            "upi_id": settings.get("upi_id"),
-            "terms": settings.get("terms"),
-        },
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.invoices.insert_one({**invoice})
-    invoice.pop("_id", None)
-    return invoice
-
-@api_router.delete("/invoices/{invoice_id}")
-async def delete_invoice(invoice_id: str, user: dict = Depends(get_current_user)):
-    await db.invoices.delete_one({"id": invoice_id})
-    return {"ok": True}
-
-# ---------------- Dashboard / Reminders ----------------
-def parse_iso(s: str) -> datetime:
-    try:
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
-    except Exception:
-        return datetime.now(timezone.utc)
-
-@api_router.get("/dashboard")
-async def dashboard(user: dict = Depends(get_current_user)):
-    shops = await db.shops.find({"active": True}, {"_id": 0}).to_list(1000)
-    entries = await db.entries.find({}, {"_id": 0}).to_list(5000)
-    last_by_shop = {}
-    for e in entries:
-        sid = e["shop_id"]
-        d = parse_iso(e["entry_date"])
-        if sid not in last_by_shop or d > last_by_shop[sid]:
-            last_by_shop[sid] = d
-    today = datetime.now(timezone.utc).date()
-    reminders = []
-    due_today = overdue = upcoming = 0
-    for s in shops:
-        last = last_by_shop.get(s["id"])
-        if last:
-            next_date = (last + timedelta(days=s.get("cycle_days", 5))).date()
-            days_left = (next_date - today).days
-            if days_left < 0:
-                status = "overdue"; overdue += 1
-            elif days_left == 0:
-                status = "due_today"; due_today += 1
-            else:
-                status = "upcoming"; upcoming += 1
-            last_str = last.date().isoformat()
-        else:
-            next_date = today
-            days_left = 0
-            status = "no_entry"
-            last_str = None
-        reminders.append({
-            "shop_id": s["id"], "shop_no": s["shop_no"], "shop_name": s["name"],
-            "district": s.get("district", ""), "location": s.get("location", ""),
-            "cycle_days": s.get("cycle_days", 5),
-            "last_entry": last_str, "next_pickup": next_date.isoformat(),
-            "days_left": days_left, "status": status,
-        })
-    order = {"overdue": 0, "due_today": 1, "no_entry": 2, "upcoming": 3}
-    reminders.sort(key=lambda r: (order.get(r["status"], 4), r["days_left"]))
-
-    invoices = await db.invoices.find({}, {"_id": 0}).to_list(5000)
-    total_revenue = round(sum(i.get("grand_total", 0) for i in invoices), 2)
-    total_boxes = sum(e.get("quantity", 0) for e in entries)
-    total_waste = round(sum(e.get("waste_kg", 0) for e in entries), 2)
-    return {
-        "stats": {
-            "total_shops": len(shops),
-            "total_boxes": total_boxes,
-            "total_waste_kg": total_waste,
-            "total_revenue": total_revenue,
-            "total_invoices": len(invoices),
-            "overdue": overdue, "due_today": due_today, "upcoming": upcoming,
-        },
-        "reminders": reminders,
-    }
-
-@api_router.get("/analytics/waste")
-async def waste_analytics(user: dict = Depends(get_current_user)):
-    entries = await db.entries.find({}, {"_id": 0}).to_list(5000)
-    by_shop = {}
-    by_month = {}
-    by_type_month = {}
-    for e in entries:
-        key = e["shop_no"] + " - " + e["shop_name"]
-        by_shop.setdefault(key, {"boxes": 0, "waste": 0.0})
-        by_shop[key]["boxes"] += e.get("quantity", 0)
-        by_shop[key]["waste"] += e.get("waste_kg", 0)
-        month = parse_iso(e["entry_date"]).strftime("%Y-%m")
-        by_month.setdefault(month, {"boxes": 0, "waste": 0.0})
-        by_month[month]["boxes"] += e.get("quantity", 0)
-        by_month[month]["waste"] += e.get("waste_kg", 0)
-        t = (e.get("box_type") or "").lower()
-        by_type_month.setdefault(month, {"beer": 0.0, "brandy": 0.0})
-        if "brandy" in t:
-            by_type_month[month]["brandy"] += e.get("waste_kg", 0)
-        else:
-            by_type_month[month]["beer"] += e.get("waste_kg", 0)
-    shop_rows = [{"shop": k, "boxes": v["boxes"], "waste": round(v["waste"], 2)} for k, v in by_shop.items()]
-    shop_rows.sort(key=lambda x: x["waste"], reverse=True)
-    month_rows = [{"month": k, "boxes": v["boxes"], "waste": round(v["waste"], 2)} for k, v in sorted(by_month.items())]
-    type_month_rows = [{"month": k, "beer": round(v["beer"], 2), "brandy": round(v["brandy"], 2)} for k, v in sorted(by_type_month.items())]
-    return {"by_shop": shop_rows, "by_month": month_rows, "by_type_month": type_month_rows}
-
-# ---------------- Payments & Ledger ----------------
-async def recompute_invoice(invoice_id: str):
-    inv = await db.invoices.find_one({"id": invoice_id}, {"_id": 0})
-    if not inv:
-        return
-    paid = 0.0
-    async for p in db.payments.find({"invoice_id": invoice_id}):
-        paid += p.get("amount", 0)
-    paid = round(paid, 2)
-    balance = round(inv["grand_total"] - paid, 2)
-    status = "paid" if balance <= 0.01 else ("partial" if paid > 0 else "unpaid")
-    await db.invoices.update_one({"id": invoice_id}, {"$set": {"amount_paid": paid, "balance": balance, "status": status}})
-
-@api_router.get("/payments")
-async def list_payments(shop_id: str = "", start: str = "", end: str = "", user: dict = Depends(get_current_user)):
-    query = {}
-    if shop_id:
-        query["shop_id"] = shop_id
-    if start or end:
-        rng = {}
-        if start:
-            rng["$gte"] = start
-        if end:
-            rng["$lte"] = end + "T23:59:59"
-        query["payment_date"] = rng
-    payments = await db.payments.find(query, {"_id": 0}).sort("payment_date", -1).to_list(3000)
-    return payments
-
-@api_router.post("/payments")
-async def create_payment(data: PaymentCreate, user: dict = Depends(get_current_user)):
-    shop = await db.shops.find_one({"id": data.shop_id}, {"_id": 0})
-    if not shop:
-        raise HTTPException(status_code=404, detail="Shop not found")
-    inv_no = ""
-    if data.invoice_id:
-        inv = await db.invoices.find_one({"id": data.invoice_id}, {"_id": 0})
-        inv_no = inv["invoice_no"] if inv else ""
-    payment = {
-        "id": str(uuid.uuid4()),
-        "shop_id": shop["id"], "shop_no": shop["shop_no"], "shop_name": shop["name"],
-        "invoice_id": data.invoice_id or "", "invoice_no": inv_no,
-        "amount": round(data.amount, 2), "mode": data.mode,
-        "payment_date": data.payment_date or datetime.now(timezone.utc).isoformat(),
-        "notes": data.notes,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.payments.insert_one({**payment})
-    payment.pop("_id", None)
-    if data.invoice_id:
-        await recompute_invoice(data.invoice_id)
-    return payment
-
-@api_router.delete("/payments/{payment_id}")
-async def delete_payment(payment_id: str, user: dict = Depends(get_current_user)):
-    p = await db.payments.find_one({"id": payment_id}, {"_id": 0})
-    await db.payments.delete_one({"id": payment_id})
-    if p and p.get("invoice_id"):
-        await recompute_invoice(p["invoice_id"])
-    return {"ok": True}
-
-@api_router.get("/ledger/{shop_id}")
-async def shop_ledger(shop_id: str, user: dict = Depends(get_current_user)):
-    shop = await db.shops.find_one({"id": shop_id}, {"_id": 0})
-    if not shop:
-        raise HTTPException(status_code=404, detail="Shop not found")
-    opening = shop.get("opening_balance", 0.0)
-    invoices = await db.invoices.find({"shop_id": shop_id}, {"_id": 0}).to_list(2000)
-    payments = await db.payments.find({"shop_id": shop_id}, {"_id": 0}).to_list(2000)
-    rows = []
-    for inv in invoices:
-        rows.append({"date": inv["invoice_date"], "type": "invoice", "ref": inv["invoice_no"],
-                     "particulars": f"Invoice {inv['invoice_no']}", "debit": inv["grand_total"], "credit": 0})
-    for p in payments:
-        rows.append({"date": p["payment_date"], "type": "payment", "ref": p.get("invoice_no", ""),
-                     "particulars": f"Payment ({p['mode']})", "debit": 0, "credit": p["amount"]})
-    rows.sort(key=lambda r: r["date"])
-    balance = opening
-    for r in rows:
-        balance += r["debit"] - r["credit"]
-        r["balance"] = round(balance, 2)
-    total_debit = round(sum(r["debit"] for r in rows), 2)
-    total_credit = round(sum(r["credit"] for r in rows), 2)
-    return {
-        "shop": {"shop_no": shop["shop_no"], "name": shop["name"], "location": shop.get("location", "")},
-        "opening_balance": opening, "rows": rows,
-        "total_debit": total_debit, "total_credit": total_credit,
-        "closing_balance": round(opening + total_debit - total_credit, 2),
-    }
-
-# ---------------- Reports ----------------
-@api_router.get("/reports/daily")
-async def daily_report(day: str = "", user: dict = Depends(get_current_user)):
-    if not day:
-        day = datetime.now(timezone.utc).date().isoformat()
-    lo, hi = day, day + "T23:59:59"
-    entries = await db.entries.find({"entry_date": {"$gte": lo, "$lte": hi}}, {"_id": 0}).to_list(3000)
-    invoices = await db.invoices.find({"invoice_date": {"$gte": lo, "$lte": hi}}, {"_id": 0}).to_list(3000)
-    payments = await db.payments.find({"payment_date": {"$gte": lo, "$lte": hi}}, {"_id": 0}).to_list(3000)
-    return {
-        "day": day,
-        "boxes": sum(e.get("quantity", 0) for e in entries),
-        "waste_kg": round(sum(e.get("waste_kg", 0) for e in entries), 2),
-        "entries_count": len(entries),
-        "invoice_count": len(invoices),
-        "invoice_total": round(sum(i.get("grand_total", 0) for i in invoices), 2),
-        "collections": round(sum(p.get("amount", 0) for p in payments), 2),
-        "entries": entries, "invoices": invoices, "payments": payments,
-    }
-
-@api_router.get("/reports/monthly")
-async def monthly_report(month: str = "", user: dict = Depends(get_current_user)):
-    if not month:
-        month = datetime.now(timezone.utc).strftime("%Y-%m")
-    lo, hi = month + "-01", month + "-31T23:59:59"
-    entries = await db.entries.find({"entry_date": {"$gte": lo, "$lte": hi}}, {"_id": 0}).to_list(9000)
-    invoices = await db.invoices.find({"invoice_date": {"$gte": lo, "$lte": hi}}, {"_id": 0}).to_list(9000)
-    payments = await db.payments.find({"payment_date": {"$gte": lo, "$lte": hi}}, {"_id": 0}).to_list(9000)
-    by_day = {}
-    for e in entries:
-        d = e["entry_date"][:10]
-        by_day.setdefault(d, {"boxes": 0, "waste": 0.0, "invoiced": 0.0, "collected": 0.0})
-        by_day[d]["boxes"] += e.get("quantity", 0)
-        by_day[d]["waste"] += e.get("waste_kg", 0)
-    for i in invoices:
-        d = i["invoice_date"][:10]
-        by_day.setdefault(d, {"boxes": 0, "waste": 0.0, "invoiced": 0.0, "collected": 0.0})
-        by_day[d]["invoiced"] += i.get("grand_total", 0)
-    for p in payments:
-        d = p["payment_date"][:10]
-        by_day.setdefault(d, {"boxes": 0, "waste": 0.0, "invoiced": 0.0, "collected": 0.0})
-        by_day[d]["collected"] += p.get("amount", 0)
-    daily = [{"date": k, **{kk: round(vv, 2) for kk, vv in v.items()}} for k, v in sorted(by_day.items())]
-    return {
-        "month": month,
-        "total_boxes": sum(e.get("quantity", 0) for e in entries),
-        "total_waste": round(sum(e.get("waste_kg", 0) for e in entries), 2),
-        "total_invoiced": round(sum(i.get("grand_total", 0) for i in invoices), 2),
-        "total_collected": round(sum(p.get("amount", 0) for p in payments), 2),
-        "invoice_count": len(invoices),
-        "outstanding": round(sum(i.get("balance", 0) for i in invoices), 2),
-        "daily": daily,
-    }
-
-@api_router.get("/inventory")
-async def inventory_dashboard(user: dict = Depends(get_current_user)):
-    shops = await db.shops.find({}, {"_id": 0}).to_list(1000)
-    entries = await db.entries.find({}, {"_id": 0}).to_list(9000)
-    agg = {}
-    for e in entries:
-        sid = e["shop_id"]
-        agg.setdefault(sid, {"boxes": 0, "waste": 0.0, "last": None, "count": 0})
-        agg[sid]["boxes"] += e.get("quantity", 0)
-        agg[sid]["waste"] += e.get("waste_kg", 0)
-        agg[sid]["count"] += 1
-        d = e["entry_date"]
-        if not agg[sid]["last"] or d > agg[sid]["last"]:
-            agg[sid]["last"] = d
-    rows = []
-    for s in shops:
-        a = agg.get(s["id"], {"boxes": 0, "waste": 0.0, "last": None, "count": 0})
-        rows.append({
-            "shop_no": s["shop_no"], "name": s["name"], "location": s.get("location", ""),
-            "cycle_days": s.get("cycle_days", 5),
-            "total_boxes": a["boxes"], "total_waste": round(a["waste"], 2),
-            "entries": a["count"], "last_entry": a["last"],
-        })
-    rows.sort(key=lambda r: r["total_boxes"], reverse=True)
-    type_agg = {}
-    for e in entries:
-        t = e.get("box_type", "Cotton Box")
-        type_agg.setdefault(t, {"boxes": 0, "waste": 0.0})
-        type_agg[t]["boxes"] += e.get("quantity", 0)
-        type_agg[t]["waste"] += e.get("waste_kg", 0)
-    by_type = [{"type": k, "boxes": v["boxes"], "waste": round(v["waste"], 2)} for k, v in type_agg.items()]
-    by_type.sort(key=lambda x: x["boxes"], reverse=True)
-    return {
-        "total_boxes": sum(r["total_boxes"] for r in rows),
-        "total_waste": round(sum(r["total_waste"] for r in rows), 2),
-        "active_shops": len([r for r in rows if r["entries"] > 0]),
-        "by_type": by_type,
-        "rows": rows,
-    }
-
-# ---------------- Bulk shop import ----------------
-@api_router.post("/shops/import")
-async def import_shops(file: UploadFile = File(...), user: dict = Depends(get_current_user)):
-    content = await file.read()
-    updated, created, errors = 0, 0, []
-    rows = []
-    name = (file.filename or "").lower()
-    try:
-        if name.endswith(".csv"):
-            text = content.decode("utf-8", errors="ignore")
-            lines = [l for l in text.splitlines() if l.strip()]
-            if lines:
-                headers = [h.strip().lower() for h in lines[0].split(",")]
-                for line in lines[1:]:
-                    vals = line.split(",")
-                    rows.append({headers[i]: vals[i].strip() if i < len(vals) else "" for i in range(len(headers))})
-        else:
-            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True)
-            ws = wb.active
-            data = list(ws.iter_rows(values_only=True))
-            if data:
-                headers = [str(h).strip().lower() if h is not None else "" for h in data[0]]
-                for r in data[1:]:
-                    rows.append({headers[i]: (str(r[i]).strip() if i < len(r) and r[i] is not None else "") for i in range(len(headers))})
+        if db.query(SettingsModel).count() <= 1:
+            settings_data = [
+                ("waste_divisor", "10"),
+                ("company_name", "Auro Products Billing Suite"),
+                ("address", "123 Industrial Estate, Coimbatore"),
+                ("gstin", "33AABCA0000A1Z5"),
+                ("state", "Tamil Nadu"),
+                ("state_code", "33"),
+                ("phone", "9876543210"),
+                ("email", "support@auroproducts.com"),
+                ("bank_name", "HDFC Bank"),
+                ("account_no", "123456789012"),
+                ("ifsc", "HDFC0001234"),
+                ("upi_id", "auroproducts@okhdfcbank"),
+                ("terms", "Goods once sold will not be taken back."),
+                ("tax_rate", "18"),
+                ("currency", "INR"),
+                ("auto_backup", "enabled")
+            ]
+            for k, v in settings_data:
+                existing = db.query(SettingsModel).filter(SettingsModel.key_name == k).first()
+                if not existing:
+                    db.add(SettingsModel(key_name=k, key_value=v))
+            db.commit()
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Could not parse file: {e}")
+        print(f"Seeding error: {e}")
+        db.rollback()
+    finally:
+        db.close()
 
-    def pick(row, *keys):
-        for k in keys:
-            if k in row and row[k]:
-                return row[k]
-        return ""
+seed_database()
 
-    for row in rows:
-        shop_no = pick(row, "shop_no", "shop no", "shopno", "shop number")
-        if not shop_no:
-            continue
-        supervisor = pick(row, "supervisor", "supervisor name", "incharge")
-        contact = pick(row, "contact", "phone", "mobile", "contact no")
-        existing = await db.shops.find_one({"shop_no": shop_no})
-        update = {}
-        if supervisor:
-            update["supervisor"] = supervisor
-        if contact:
-            update["contact"] = contact
-        if existing:
-            if update:
-                await db.shops.update_one({"shop_no": shop_no}, {"$set": update})
-                updated += 1
-        else:
-            new_shop = Shop(shop_no=shop_no, name=pick(row, "name", "shop name") or f"TASMAC {shop_no}",
-                            district=pick(row, "district"), location=pick(row, "location"),
-                            supervisor=supervisor, contact=contact)
-            await db.shops.insert_one(new_shop.model_dump())
-            created += 1
-    return {"updated": updated, "created": created, "processed": len(rows)}
-
-# ---------------- Email (Resend managed) ----------------
-EMAIL_BASE_URL = "https://integrations.emergentagent.com"
-EMAIL_KEY = os.environ.get("EMERGENT_EMAIL_KEY", "")
-EMAIL_FROM_NAME = os.environ.get("EMAIL_FROM_NAME", "Auro Products")
-
-_SHORTENERS = ("bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "goo.gl", "rebrand.ly")
-_CRED_ASK = ("reply with your password", "reply with the code", "send your password", "cvv",
-             "send us your password", "enter your password below", "confirm your card number",
-             "your full card number", "seed phrase", "recovery phrase", "verify your card",
-             "social security number", "confirm your bank details")
-_HOSTISH = re.compile(r"\b(?:https?://)?((?:[a-z0-9-]+\.)+[a-z]{2,})", re.I)
-
-def _host_ok(host: str) -> bool:
-    if not host or "xn--" in host:
-        return False
-    try:
-        ipaddress.ip_address(host)
-        return False
-    except ValueError:
-        pass
-    return not any(host == s or host.endswith("." + s) for s in _SHORTENERS)
-
-def _same_site(shown: str, real: str) -> bool:
-    return shown == real or real.endswith("." + shown) or shown.endswith("." + real)
-
-class _EmailScan(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.tags, self.urls, self.anchors = set(), [], []
-        self._href, self._text = None, []
-    def handle_starttag(self, tag, attrs):
-        self.tags.add(tag.lower())
-        self.urls += [v for k, v in attrs if k.lower() in ("href", "src") and v]
-        if tag.lower() == "a":
-            self._href = dict((k.lower(), v) for k, v in attrs).get("href")
-            self._text = []
-    def handle_data(self, data):
-        if self._href is not None:
-            self._text.append(data)
-    def handle_endtag(self, tag):
-        if tag.lower() == "a" and self._href is not None:
-            self.anchors.append((self._href, "".join(self._text)))
-            self._href, self._text = None, []
-
-def _assert_safe_email(subject: str, html: str) -> None:
-    scan = _EmailScan(); scan.feed(html)
-    if scan.tags & {"form", "input", "textarea", "select"}:
-        raise ValueError("No forms or input fields in email (G2)")
-    body = f"{subject}\n{html}".lower()
-    for p in _CRED_ASK:
-        if p in body:
-            raise ValueError(f"Email asks the recipient for credentials: {p!r} (G2)")
-    for url in scan.urls:
-        low = url.strip().lower()
-        if low.startswith(("mailto:", "tel:", "cid:", "#")):
-            continue
-        if not low.startswith("https://"):
-            raise ValueError(f"Email links/assets must be absolute https: {url!r} (G3)")
-        host = urlparse(low).hostname or ""
-        if not _host_ok(host) or urlparse(low).username is not None:
-            raise ValueError(f"Shortened, numeric-host or credential-bearing URL: {url!r} (G3)")
-    for href, text in scan.anchors:
-        real = urlparse(href.strip().lower()).hostname or ""
-        if not real:
-            continue
-        for m in _HOSTISH.finditer(text):
-            if not _same_site(m.group(1).lower(), real):
-                raise ValueError(f"Anchor text {m.group(1)!r} != real link host {real!r} (G3)")
-
-async def send_email(*, to: str, subject: str, html: str) -> Optional[str]:
-    if not EMAIL_KEY:
-        logger.warning("EMERGENT_EMAIL_KEY not set; skipping email")
-        return None
-    _assert_safe_email(subject, html)
-    payload = {"to": [to], "subject": subject, "html": html, "from_name": EMAIL_FROM_NAME}
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(f"{EMAIL_BASE_URL}/api/v1/email/send",
-                                 headers={"X-Email-Key": EMAIL_KEY}, json=payload)
-    resp.raise_for_status()
-    return resp.json().get("id")
-
-# ---------------- WhatsApp / SMS (Twilio, optional) ----------------
-def send_whatsapp_sms(to_number: str, message: str) -> dict:
-    sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
-    token = os.environ.get("TWILIO_AUTH_TOKEN", "")
-    wa_from = os.environ.get("TWILIO_WHATSAPP_FROM", "")
-    sms_from = os.environ.get("TWILIO_SMS_FROM", "")
-    if not (sid and token and to_number):
-        return {"sent": False, "reason": "twilio_not_configured"}
-    try:
-        from twilio.rest import Client
-        client = Client(sid, token)
-        result = {}
-        if wa_from:
-            m = client.messages.create(from_=f"whatsapp:{wa_from}", to=f"whatsapp:{to_number}", body=message)
-            result["whatsapp_sid"] = m.sid
-        if sms_from:
-            m = client.messages.create(from_=sms_from, to=to_number, body=message)
-            result["sms_sid"] = m.sid
-        result["sent"] = bool(result)
-        return result
-    except Exception as e:
-        logger.error(f"Twilio send failed: {e}")
-        return {"sent": False, "reason": str(e)}
-
-async def build_due_reminders() -> list:
-    shops = await db.shops.find({"active": True}, {"_id": 0}).to_list(1000)
-    entries = await db.entries.find({}, {"_id": 0}).to_list(9000)
-    last_by_shop = {}
-    for e in entries:
-        sid = e["shop_id"]; d = parse_iso(e["entry_date"])
-        if sid not in last_by_shop or d > last_by_shop[sid]:
-            last_by_shop[sid] = d
-    today = datetime.now(timezone.utc).date()
-    due = []
-    for s in shops:
-        last = last_by_shop.get(s["id"])
-        if not last:
-            continue
-        next_date = (last + timedelta(days=s.get("cycle_days", 5))).date()
-        if next_date <= today:
-            due.append({"shop_no": s["shop_no"], "name": s["name"], "location": s.get("location", ""),
-                        "next": next_date.isoformat(), "overdue_days": (today - next_date).days})
-    due.sort(key=lambda r: r["overdue_days"], reverse=True)
-    return due
-
-async def run_reminder_job():
-    try:
-        settings = await get_settings_doc()
-        due = await build_due_reminders()
-        if not due:
-            logger.info("Reminder job: no shops due")
-            return
-        lines = "".join(
-            f'<tr><td style="padding:6px 10px;border:1px solid #ddd">{escape(d["shop_no"])}</td>'
-            f'<td style="padding:6px 10px;border:1px solid #ddd">{escape(d["name"])} — {escape(d["location"])}</td>'
-            f'<td style="padding:6px 10px;border:1px solid #ddd">{escape(str(d["next"]))}</td>'
-            f'<td style="padding:6px 10px;border:1px solid #ddd">{d["overdue_days"]}d</td></tr>'
-            for d in due[:100]
-        )
-        html = (f'<table role="presentation" width="100%"><tr><td style="padding:20px;font-family:Arial,sans-serif">'
-                f'<h2 style="margin:0 0 8px">Cotton Box Pickup Reminders</h2>'
-                f'<p>{len(due)} shop(s) are due or overdue for a cotton box pickup today.</p>'
-                f'<table style="border-collapse:collapse;font-size:13px"><tr>'
-                f'<th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Shop</th>'
-                f'<th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Location</th>'
-                f'<th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Due Date</th>'
-                f'<th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Overdue</th></tr>{lines}</table>'
-                f'<p style="font-size:12px;color:#888;margin-top:16px">Sent by {escape(EMAIL_FROM_NAME)} · Built by R I Billing Pro. '
-                f'We never ask for your password or card details by email.</p></td></tr></table>')
-        email_to = settings.get("reminder_email") or os.environ.get("ADMIN_EMAIL")
-        if email_to:
-            try:
-                await send_email(to=email_to, subject=f"{len(due)} cotton box pickups due today", html=html)
-            except Exception as e:
-                logger.error(f"Reminder email failed: {e}")
-        wa = settings.get("reminder_whatsapp") or ""
-        if wa:
-            top = "\n".join(f"{d['shop_no']} {d['name']} (due {d['next']})" for d in due[:15])
-            send_whatsapp_sms(wa, f"Auro Products: {len(due)} cotton box pickups due today.\n{top}")
-    except Exception as e:
-        logger.error(f"Reminder job error: {e}")
-
-@api_router.post("/reminders/run")
-async def trigger_reminders(background: BackgroundTasks, user: dict = Depends(get_current_user)):
-    due = await build_due_reminders()
-    background.add_task(lambda: None)
-    await run_reminder_job()
-    return {"triggered": True, "due_count": len(due)}
-
-@api_router.post("/cron/reminders")
-async def cron_reminders(request: Request, background: BackgroundTasks, authorization: str = Header(None)):
-    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
-    secret = os.environ.get("WEBHOOK_CRON_SECRET", "")
-    token = (authorization or "").replace("Bearer ", "").strip()
-    if not secret or not hmac.compare_digest(token, secret):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    background.add_task(run_reminder_job)
-    return {"accepted": True}
-
-# ---------------- Overdue nudge (re-ping shops still overdue >= 2 days) ----------------
-async def run_overdue_nudge():
-    try:
-        settings = await get_settings_doc()
-        due = await build_due_reminders()
-        nudge = [d for d in due if d["overdue_days"] >= 2]
-        if not nudge:
-            logger.info("Overdue nudge: none overdue >= 2 days")
-            return
-        lines = "".join(
-            f'<tr><td style="padding:6px 10px;border:1px solid #ddd">{escape(d["shop_no"])}</td>'
-            f'<td style="padding:6px 10px;border:1px solid #ddd">{escape(d["name"])} — {escape(d["location"])}</td>'
-            f'<td style="padding:6px 10px;border:1px solid #ddd;color:#c00"><b>{d["overdue_days"]} days overdue</b></td></tr>'
-            for d in nudge[:100]
-        )
-        html = (f'<table role="presentation" width="100%"><tr><td style="padding:20px;font-family:Arial,sans-serif">'
-                f'<h2 style="margin:0 0 8px;color:#c00">Still Overdue — Action Needed</h2>'
-                f'<p>{len(nudge)} shop(s) have been overdue for 2 or more days for a cotton box pickup.</p>'
-                f'<table style="border-collapse:collapse;font-size:13px"><tr>'
-                f'<th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Shop</th>'
-                f'<th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Location</th>'
-                f'<th style="padding:6px 10px;border:1px solid #ddd;text-align:left">Status</th></tr>{lines}</table>'
-                f'<p style="font-size:12px;color:#888;margin-top:16px">Sent by {escape(EMAIL_FROM_NAME)} · Built by R I Billing Pro. '
-                f'We never ask for your password or card details by email.</p></td></tr></table>')
-        email_to = settings.get("reminder_email") or os.environ.get("ADMIN_EMAIL")
-        if email_to:
-            try:
-                await send_email(to=email_to, subject=f"{len(nudge)} shops still overdue (2+ days)", html=html)
-            except Exception as e:
-                logger.error(f"Overdue nudge email failed: {e}")
-        wa = settings.get("reminder_whatsapp") or ""
-        if wa:
-            top = "\n".join(f"{d['shop_no']} {d['name']} ({d['overdue_days']}d overdue)" for d in nudge[:15])
-            send_whatsapp_sms(wa, f"Auro Products URGENT: {len(nudge)} shops overdue 2+ days.\n{top}")
-    except Exception as e:
-        logger.error(f"Overdue nudge error: {e}")
-
-@api_router.post("/overdue-nudge/run")
-async def trigger_overdue(user: dict = Depends(get_current_user)):
-    due = await build_due_reminders()
-    nudge = [d for d in due if d["overdue_days"] >= 2]
-    await run_overdue_nudge()
-    return {"triggered": True, "nudge_count": len(nudge)}
-
-@api_router.post("/cron/overdue-nudge")
-async def cron_overdue(request: Request, background: BackgroundTasks, authorization: str = Header(None)):
-    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
-    secret = os.environ.get("WEBHOOK_CRON_SECRET", "")
-    token = (authorization or "").replace("Bearer ", "").strip()
-    if not secret or not hmac.compare_digest(token, secret):
-        raise HTTPException(status_code=401, detail="Unauthorized")
-    background.add_task(run_overdue_nudge)
-    return {"accepted": True}
-
-# ---------------- Collections (outstanding balance per shop) ----------------
-@api_router.get("/collections")
-async def collections(user: dict = Depends(get_current_user)):
-    shops = await db.shops.find({}, {"_id": 0}).to_list(1000)
-    invoices = await db.invoices.find({}, {"_id": 0}).to_list(9000)
-    payments = await db.payments.find({}, {"_id": 0}).to_list(9000)
-    inv_by, pay_by = {}, {}
-    for i in invoices:
-        inv_by[i["shop_id"]] = inv_by.get(i["shop_id"], 0) + i.get("grand_total", 0)
-    for p in payments:
-        pay_by[p["shop_id"]] = pay_by.get(p["shop_id"], 0) + p.get("amount", 0)
-    rows = []
-    for s in shops:
-        opening = s.get("opening_balance", 0.0)
-        invoiced = round(inv_by.get(s["id"], 0), 2)
-        paid = round(pay_by.get(s["id"], 0), 2)
-        outstanding = round(opening + invoiced - paid, 2)
-        if abs(outstanding) < 0.01:
-            continue
-        rows.append({
-            "shop_id": s["id"], "shop_no": s["shop_no"], "name": s["name"], "location": s.get("location", ""),
-            "opening": opening, "invoiced": invoiced, "paid": paid, "outstanding": outstanding,
-        })
-    rows.sort(key=lambda r: r["outstanding"], reverse=True)
-    return {
-        "total_outstanding": round(sum(r["outstanding"] for r in rows), 2),
-        "shops_with_dues": len(rows),
-        "total_paid": round(sum(r["paid"] for r in rows), 2),
-        "rows": rows,
-    }
-
-# ---------------- Account statement (per shop, date range) ----------------
-@api_router.get("/statement/{shop_id}")
-async def account_statement(shop_id: str, start: str = "", end: str = "", user: dict = Depends(get_current_user)):
-    shop = await db.shops.find_one({"id": shop_id}, {"_id": 0})
-    if not shop:
-        raise HTTPException(status_code=404, detail="Shop not found")
-    opening = shop.get("opening_balance", 0.0)
-    invoices = await db.invoices.find({"shop_id": shop_id}, {"_id": 0}).to_list(3000)
-    payments = await db.payments.find({"shop_id": shop_id}, {"_id": 0}).to_list(3000)
-    end_cut = (end + "T23:59:59") if end else None
-    rows = []
-    op = opening
-
-    def add(dt, typ, ref, part, debit, credit):
-        nonlocal op
-        if start and dt < start:
-            op += debit - credit
-            return
-        if end_cut and dt > end_cut:
-            return
-        rows.append({"date": dt, "type": typ, "ref": ref, "particulars": part, "debit": debit, "credit": credit})
-
-    for inv in invoices:
-        add(inv["invoice_date"], "invoice", inv["invoice_no"], f"Invoice {inv['invoice_no']}", inv["grand_total"], 0)
-    for p in payments:
-        add(p["payment_date"], "payment", p.get("invoice_no", ""), f"Payment ({p['mode']})", 0, p["amount"])
-    rows.sort(key=lambda x: x["date"])
-    bal = op
-    for r in rows:
-        bal += r["debit"] - r["credit"]
-        r["balance"] = round(bal, 2)
-    td = round(sum(r["debit"] for r in rows), 2)
-    tc = round(sum(r["credit"] for r in rows), 2)
-    settings = await get_settings_doc()
-    return {
-        "shop": {"shop_no": shop["shop_no"], "name": shop["name"], "location": shop.get("location", "")},
-        "seller": {"name": settings.get("company_name"), "gstin": settings.get("gstin"), "address": settings.get("address")},
-        "start": start, "end": end,
-        "opening_balance": round(op, 2), "rows": rows,
-        "total_debit": td, "total_credit": tc, "closing_balance": round(op + td - tc, 2),
-    }
-
-app.include_router(api_router)
+app = FastAPI(title="Auro Product API", version="1.0")
 
 app.add_middleware(
     CORSMiddleware,
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_origins=os.environ.get('CORS_ORIGINS', '*').split(','),
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-# ---------------- Seed ----------------
-TN_DISTRICTS = [
-    ("Chennai", ["Anna Nagar", "T Nagar", "Adyar", "Velachery", "Tambaram", "Guindy", "Perambur", "Egmore"]),
-    ("Coimbatore", ["Gandhipuram", "RS Puram", "Peelamedu", "Saibaba Colony", "Ukkadam"]),
-    ("Madurai", ["Anna Nagar", "KK Nagar", "Simmakkal", "Goripalayam", "Mattuthavani"]),
-    ("Trichy", ["Srirangam", "Thillai Nagar", "Woraiyur", "KK Nagar", "Cantonment"]),
-    ("Salem", ["Fairlands", "Hasthampatti", "Ammapet", "Suramangalam"]),
-    ("Erode", ["Karungalpalayam", "Surampatti", "Perundurai", "Gobichettipalayam"]),
-    ("Tirunelveli", ["Palayamkottai", "Town", "Melapalayam", "Vannarpettai"]),
-    ("Vellore", ["Katpadi", "Gandhi Nagar", "Sathuvachari"]),
-    ("Thanjavur", ["Medical College Road", "New Bus Stand", "Gandhiji Road"]),
-    ("Tiruppur", ["Kumaran Road", "Avinashi Road", "Dharapuram"]),
-    ("Dindigul", ["Palani Road", "Begambur", "Nagal Nagar"]),
-    ("Kanchipuram", ["Little Kanchipuram", "Gandhi Road"]),
-]
+# --- Pydantic Schemas ---
+class LoginRequest(BaseModel):
+    email: str
+    password: str
 
-async def seed_shops():
-    count = await db.shops.count_documents({})
-    if count >= 149:
-        return
-    await db.shops.delete_many({})
-    docs = []
-    n = 0
-    idx = 0
-    while n < 149:
-        district, areas = TN_DISTRICTS[idx % len(TN_DISTRICTS)]
-        area = areas[(n // len(TN_DISTRICTS)) % len(areas)]
-        shop_no = f"TN{1001 + n}"
-        cycle = 2 if n % 6 == 0 else 5
-        shop = Shop(
-            shop_no=shop_no,
-            name=f"TASMAC Shop {1001 + n}",
-            district=district,
-            location=f"{area}, {district}",
-            supervisor="",
-            contact="",
-            cycle_days=cycle,
-        )
-        docs.append(shop.model_dump())
-        n += 1
-        idx += 1
-    await db.shops.insert_many(docs)
-    logger.info(f"Seeded {len(docs)} shops")
+class ShopCreate(BaseModel):
+    shop_no: str
+    name: str
+    district: Optional[str] = None
+    location: Optional[str] = None
+    supervisor: Optional[str] = None
+    contact: Optional[str] = None
+    cycle_days: int = 5
 
-async def seed_admin():
-    admin_email = os.environ.get("ADMIN_EMAIL", "admin@example.com").lower()
-    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
-    existing = await db.users.find_one({"email": admin_email})
-    if existing is None:
-        await db.users.insert_one({
-            "email": admin_email, "password_hash": hash_password(admin_password),
-            "name": "Auro Admin", "role": "admin",
-            "created_at": datetime.now(timezone.utc).isoformat(),
+class EntryCreate(BaseModel):
+    shop_id: int
+    box_type: Optional[str] = None
+    quantity: int
+    waste_kg: float = 0.0
+    entry_date: Optional[str] = None
+    notes: Optional[str] = None
+
+class InventoryCreate(BaseModel):
+    item_name: str
+    category: Optional[str] = None
+    stock_qty: int = 0
+    unit: str = "pcs"
+    unit_price: float = 0.0
+
+class InvoiceItemCreate(BaseModel):
+    description: Optional[str] = "General Goods"
+    hsn: Optional[str] = ""
+    unit: Optional[str] = "pcs"
+    quantity: float = 1.0
+    rate: float = 0.0
+    amount: float = 0.0
+
+class InvoiceCreate(BaseModel):
+    invoice_no: Optional[str] = None
+    customer_name: Optional[str] = None
+    shop_id: Optional[int] = None
+    gstin: Optional[str] = None
+    invoice_type: Optional[str] = "SALES"
+    items: Optional[List[InvoiceItemCreate]] = []
+    item_description: Optional[str] = None
+    quantity: Optional[float] = 1.0
+    unit: Optional[str] = "pcs"
+    rate: Optional[float] = 0.0
+    total_amount: float
+    tax_amount: float
+    taxable_value: Optional[float] = 0.0
+    cgst_percent: Optional[float] = 2.5
+    cgst_amount: Optional[float] = 0.0
+    sgst_percent: Optional[float] = 2.5
+    sgst_amount: Optional[float] = 0.0
+    round_off: Optional[float] = 0.0
+    grand_total: Optional[float] = 0.0
+    amount_paid: Optional[float] = 0.0
+    balance: Optional[float] = 0.0
+    invoice_date: Optional[str] = None
+    status: str = "Paid"
+
+class LedgerCreate(BaseModel):
+    shop_id: Union[int, str]
+    invoice_id: Optional[Union[int, str]] = None
+    amount: float
+    transaction_type: Optional[str] = "Credit"
+    mode: Optional[str] = "UPI"
+    payment_mode: Optional[str] = None
+    reference_no: Optional[str] = None
+    notes: Optional[str] = None
+    payment_date: Optional[str] = None
+    transaction_date: Optional[str] = None
+
+class CollectionCreate(BaseModel):
+    shop_id: Union[int, str]
+    collected_amount: float
+    collection_date: Optional[str] = None
+    collected_by: Optional[str] = None
+    status: str = "Completed"
+
+class SettingsUpdate(BaseModel):
+    key_name: str
+    key_value: str
+
+@app.get("/")
+def read_root():
+    return {"message": "Auro Product API is running!"}
+
+# --- AUTHENTICATION ENDPOINT ---
+@app.post("/api/login")
+def login_user(payload: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(UserModel).filter(UserModel.email == payload.email).first()
+    if not user or user.password != payload.password:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    
+    return {
+        "success": True,
+        "email": user.email,
+        "role": user.role,
+        "message": "Login successful"
+    }
+
+# --- SHOPS CRUD ---
+@app.get("/api/shops")
+def get_shops(search: Optional[str] = None, district: Optional[str] = None, db = Depends(get_db)):
+    query = db.query(ShopModel)
+    if search:
+        query = query.filter(ShopModel.name.ilike(f"%{search}%") | ShopModel.shop_no.ilike(f"%{search}%"))
+    if district:
+        query = query.filter(ShopModel.district.ilike(f"%{district}%"))
+    return query.all()
+
+@app.post("/api/shops")
+def create_shop(shop: ShopCreate, db = Depends(get_db)):
+    db_shop = ShopModel(**shop.dict())
+    db.add(db_shop)
+    db.commit()
+    db.refresh(db_shop)
+    return {"success": True, "data": db_shop}
+
+@app.put("/api/shops/{shop_id}")
+def update_shop(shop_id: int, shop: ShopCreate, db = Depends(get_db)):
+    db_shop = db.query(ShopModel).filter(ShopModel.id == shop_id).first()
+    if not db_shop:
+        raise HTTPException(status_code=404, detail="Shop not found")
+    for key, value in shop.dict().items():
+        setattr(db_shop, key, value)
+    db.commit()
+    db.refresh(db_shop)
+    return {"success": True, "data": db_shop}
+
+@app.delete("/api/shops/{shop_id}")
+def delete_shop(shop_id: int, db = Depends(get_db)):
+    shop = db.query(ShopModel).filter(ShopModel.id == shop_id).first()
+    if not shop:
+        raise HTTPException(status_code=404, detail="Shop not found")
+    
+    try:
+        db.query(EntryModel).filter(EntryModel.shop_id == shop_id).delete()
+        db.query(LedgerModel).filter(LedgerModel.shop_id == shop_id).delete()
+        
+        db.delete(shop)
+        db.commit()
+        return {"success": True, "message": "Shop and associated records deleted"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Cannot delete shop because it has active ledger or box entries.")
+
+@app.get("/api/shops/districts")
+def get_shop_districts(db = Depends(get_db)):
+    districts = db.query(ShopModel.district).distinct().all()
+    return [d[0] for d in districts if d[0]]
+
+# --- ENTRIES CRUD ---
+@app.get("/api/entries")
+def get_entries(db = Depends(get_db)):
+    return db.query(EntryModel).order_by(EntryModel.entry_date.desc()).all()
+
+@app.post("/api/entries")
+def create_entry(entry: EntryCreate, db = Depends(get_db)):
+    parsed_date = datetime.datetime.utcnow()
+    if entry.entry_date:
+        try:
+            parsed_date = datetime.datetime.fromisoformat(str(entry.entry_date).replace("Z", "+00:00"))
+        except Exception:
+            pass
+    db_entry = EntryModel(
+        shop_id=entry.shop_id,
+        box_type=entry.box_type,
+        quantity=entry.quantity,
+        waste_kg=entry.waste_kg,
+        entry_date=parsed_date,
+        notes=entry.notes
+    )
+    db.add(db_entry)
+    db.commit()
+    db.refresh(db_entry)
+    return {"success": True, "data": db_entry}
+
+@app.put("/api/entries/{entry_id}")
+def update_entry(entry_id: int, entry: EntryCreate, db = Depends(get_db)):
+    db_entry = db.query(EntryModel).filter(EntryModel.id == entry_id).first()
+    if not db_entry:
+        raise HTTPException(status_code=404, detail="Entry not found")
+
+    parsed_date = db_entry.entry_date
+    if entry.entry_date:
+        try:
+            parsed_date = datetime.datetime.fromisoformat(str(entry.entry_date).replace("Z", "+00:00"))
+        except Exception:
+            pass
+
+    db_entry.shop_id = entry.shop_id
+    db_entry.box_type = entry.box_type
+    db_entry.quantity = entry.quantity
+    db_entry.waste_kg = entry.waste_kg
+    db_entry.entry_date = parsed_date
+    db_entry.notes = entry.notes
+
+    db.commit()
+    db.refresh(db_entry)
+    return {"success": True, "data": db_entry}
+
+@app.delete("/api/entries/{entry_id}")
+def delete_entry(entry_id: int, db = Depends(get_db)):
+    db_entry = db.query(EntryModel).filter(EntryModel.id == entry_id).first()
+    if not db_entry:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    db.delete(db_entry)
+    db.commit()
+    return {"success": True}
+
+# --- INVENTORY CRUD ---
+@app.get("/api/inventory")
+def get_inventory_dashboard(db = Depends(get_db)):
+    total_boxes = db.query(func.sum(EntryModel.quantity)).scalar() or 0
+    total_waste = db.query(func.sum(EntryModel.waste_kg)).scalar() or 0.0
+    active_shops = db.query(ShopModel).count()
+
+    by_type_query = db.query(
+        EntryModel.box_type,
+        func.sum(EntryModel.quantity).label("boxes"),
+        func.sum(EntryModel.waste_kg).label("waste")
+    ).group_by(EntryModel.box_type).all()
+
+    by_type = [{"type": t.box_type or "General", "boxes": t.boxes or 0, "waste": round(t.waste or 0.0, 2)} for t in by_type_query]
+
+    shops = db.query(ShopModel).all()
+    rows = []
+    for shop in shops:
+        shop_entries = db.query(EntryModel).filter(EntryModel.shop_id == shop.id).all()
+        shop_boxes = sum([e.quantity for e in shop_entries])
+        shop_waste = sum([e.waste_kg for e in shop_entries])
+        rows.append({
+            "shop_no": shop.shop_no,
+            "name": shop.name,
+            "location": shop.location or "",
+            "total_boxes": shop_boxes,
+            "total_waste": round(shop_waste, 2),
+            "entries": len(shop_entries),
+            "last_entry": max([e.entry_date for e in shop_entries]).isoformat() if shop_entries else None
         })
-        logger.info("Admin seeded")
-    elif not verify_password(admin_password, existing["password_hash"]):
-        await db.users.update_one({"email": admin_email}, {"$set": {"password_hash": hash_password(admin_password)}})
 
-@app.on_event("startup")
-async def startup():
-    await db.users.create_index("email", unique=True)
-    await seed_admin()
-    await seed_shops()
-    await get_settings_doc()
+    items = db.query(InventoryModel).all()
+    return {
+        "total_boxes": total_boxes,
+        "total_waste": round(total_waste, 2),
+        "active_shops": active_shops,
+        "by_type": by_type,
+        "rows": rows,
+        "items": items
+    }
 
-@app.on_event("shutdown")
-async def shutdown_db_client():
-    client.close()
+@app.post("/api/settings/opening-balance-history")
+def update_opening_balance(payload: dict, db = Depends(get_db)):
+    amount = float(payload.get("opening_balance", 0))
+    mode = payload.get("mode", "replace")
+    
+    setting = db.query(SettingsModel).filter(SettingsModel.key_name == "opening_balance").first()
+    
+    current_val = 0.0
+    history = []
+    
+    if setting:
+        try:
+            old_data = json.loads(setting.key_value)
+            current_val = float(old_data.get("opening_balance", 0))
+            history = old_data.get("history", [])
+        except:
+            pass
+
+    final_balance = (current_val + amount) if mode == "add" else amount
+    
+    history.insert(0, {
+        "amount": amount,
+        "total_after": final_balance,
+        "mode": mode,
+        "timestamp": payload.get("timestamp", datetime.datetime.utcnow().isoformat())
+    })
+    
+    new_data_str = json.dumps({
+        "opening_balance": final_balance,
+        "history": history
+    })
+    
+    if setting:
+        setting.key_value = new_data_str
+    else:
+        new_setting = SettingsModel(key_name="opening_balance", key_value=new_data_str)
+        db.add(new_setting)
+        
+    db.commit()
+    return {"opening_balance": final_balance, "history": history}
+
+@app.post("/api/inventory")
+def create_inventory_item(item: InventoryCreate, db = Depends(get_db)):
+    db_item = InventoryModel(**item.dict())
+    db.add(db_item)
+    db.commit()
+    db.refresh(db_item)
+    return {"success": True, "data": db_item}
+
+@app.delete("/api/inventory/{item_id}")
+def delete_inventory_item(item_id: int, db = Depends(get_db)):
+    db_item = db.query(InventoryModel).filter(InventoryModel.id == item_id).first()
+    if not db_item:
+        raise HTTPException(status_code=404, detail="Inventory item not found")
+    db.delete(db_item)
+    db.commit()
+    return {"success": True}
+
+# --- INVOICES CRUD ---
+@app.get("/api/invoices")
+def get_invoices(
+    search: Optional[str] = Query(None),
+    start: Optional[str] = Query(None),
+    end: Optional[str] = Query(None),
+    db: Session = Depends(get_db)
+):
+    query = db.query(InvoiceModel)
+    if search and search.strip():
+        search_filter = f"%{search.strip()}%"
+        query = query.filter(
+            (InvoiceModel.invoice_no.ilike(search_filter)) | 
+            (InvoiceModel.customer_name.ilike(search_filter)) |
+            (InvoiceModel.item_description.ilike(search_filter))
+        )
+    if start and start.strip():
+        try:
+            start_date = datetime.date.fromisoformat(start.strip())
+            query = query.filter(InvoiceModel.invoice_date >= start_date)
+        except ValueError:
+            pass
+    if end and end.strip():
+        try:
+            end_date = datetime.date.fromisoformat(end.strip())
+            query = query.filter(InvoiceModel.invoice_date <= end_date)
+        except ValueError:
+            pass
+            
+    invoices = query.order_by(InvoiceModel.invoice_date.desc()).all()
+    results = []
+    for inv in invoices:
+        shop = db.query(ShopModel).filter(ShopModel.id == inv.shop_id).first() if inv.shop_id else None
+        results.append({
+            "id": inv.id,
+            "invoice_no": inv.invoice_no,
+            "shop_id": inv.shop_id,
+            "shop_name": shop.name if shop else (inv.customer_name or "Walk-in Customer"),
+            "customer_name": inv.customer_name,
+            "gstin": inv.gstin,
+            "invoice_type": inv.invoice_type or "SALES",
+            "total_amount": inv.grand_total or inv.total_amount or 0.0,
+            "tax_amount": inv.tax_amount or 0.0,
+            "invoice_date": inv.invoice_date.isoformat() if inv.invoice_date else None,
+            "status": inv.status or "Completed"
+        })
+    return results
+
+@app.get("/api/invoices/{invoice_id}")
+def get_invoice_detail(invoice_id: int, db: Session = Depends(get_db)):
+    inv = db.query(InvoiceModel).filter(InvoiceModel.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    shop = db.query(ShopModel).filter(ShopModel.id == inv.shop_id).first() if inv.shop_id else None
+    settings_records = db.query(SettingsModel).all()
+    settings_map = {s.key_name: s.key_value for s in settings_records}
+    
+    seller_data = {
+        "name": settings_map.get("company_name", "Auro Products"),
+        "address": settings_map.get("address", ""),
+        "gstin": settings_map.get("gstin", ""),
+        "state": settings_map.get("state", ""),
+        "state_code": settings_map.get("state_code", ""),
+        "phone": settings_map.get("phone", ""),
+        "email": settings_map.get("email", ""),
+        "bank_name": settings_map.get("bank_name", ""),
+        "account_no": settings_map.get("account_no", ""),
+        "ifsc": settings_map.get("ifsc", ""),
+        "upi_id": settings_map.get("upi_id", ""),
+        "terms": settings_map.get("terms", "")
+    }
+
+    items_data = [
+        {
+            "description": inv.item_description or inv.customer_name or "General Goods",
+            "hsn": "",
+            "quantity": inv.quantity or 1.0,
+            "unit": inv.unit or "pcs",
+            "rate": inv.rate or (inv.taxable_value / inv.quantity) if (inv.quantity and inv.quantity > 0) else (inv.taxable_value or inv.total_amount or 0.0),
+            "amount": inv.taxable_value or inv.total_amount or 0.0
+        }
+    ]
+
+    return {
+        "id": inv.id,
+        "invoice_no": inv.invoice_no,
+        "invoice_date": inv.invoice_date.isoformat() if inv.invoice_date else None,
+        "shop_id": inv.shop_id,
+        "shop_no": shop.shop_no if shop else "—",
+        "shop_name": shop.name if shop else (inv.customer_name or "Walk-in Customer"),
+        "shop_location": shop.location if shop else "",
+        "shop_district": shop.district if shop else "",
+        "invoice_type": inv.invoice_type or "SALES",
+        "items": items_data,
+        "taxable": inv.taxable_value or 0.0,
+        "cgst_percent": inv.cgst_percent or 2.5,
+        "cgst": inv.cgst_amount or 0.0,
+        "sgst_percent": inv.sgst_percent or 2.5,
+        "sgst": inv.sgst_amount or 0.0,
+        "round_off": inv.round_off or 0.0,
+        "grand_total": inv.grand_total or inv.total_amount or 0.0,
+        "amount_paid": inv.amount_paid or 0.0,
+        "balance": inv.balance or 0.0,
+        "seller": seller_data
+    }
+
+@app.post("/api/invoices")
+def create_invoice(invoice: InvoiceCreate, db = Depends(get_db)):
+    parsed_date = datetime.datetime.utcnow()
+    if invoice.invoice_date:
+        try:
+            parsed_date = datetime.datetime.fromisoformat(str(invoice.invoice_date).replace("Z", "+00:00"))
+        except Exception:
+            pass
+
+    first_item = invoice.items[0] if invoice.items and len(invoice.items) > 0 else None
+    
+    item_desc = (
+        (first_item.description if first_item else None) or 
+        invoice.item_description or 
+        invoice.customer_name or 
+        "General Goods"
+    )
+    qty = (
+        (first_item.quantity if first_item else None) or 
+        invoice.quantity or 
+        1.0
+    )
+    unit_val = (
+        (first_item.unit if first_item else None) or 
+        invoice.unit or 
+        "pcs"
+    )
+    rate_val = (
+        (first_item.rate if first_item else None) or 
+        invoice.rate or 
+        0.0
+    )
+
+    tot = invoice.total_amount
+    tax = invoice.tax_amount
+    grand = invoice.grand_total if invoice.grand_total else tot
+    taxable = invoice.taxable_value or (tot - tax)
+    
+    if rate_val == 0.0 and qty > 0 and taxable > 0:
+        rate_val = taxable / qty
+
+    db_inv = InvoiceModel(
+        invoice_no=invoice.invoice_no or f"INV-{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}",
+        shop_id=invoice.shop_id,
+        customer_name=invoice.customer_name or "Walk-in Customer",
+        gstin=invoice.gstin,
+        invoice_type=invoice.invoice_type or "SALES",
+        item_description=item_desc,
+        quantity=qty,
+        unit=unit_val,
+        rate=rate_val,
+        total_amount=tot,
+        tax_amount=tax,
+        taxable_value=taxable,
+        cgst_percent=invoice.cgst_percent or 2.5,
+        cgst_amount=invoice.cgst_amount or (tax / 2),
+        sgst_percent=invoice.sgst_percent or 2.5,
+        sgst_amount=invoice.sgst_amount or (tax / 2),
+        round_off=invoice.round_off or 0.0,
+        grand_total=grand,
+        amount_paid=invoice.amount_paid or 0.0,
+        balance=invoice.balance or 0.0,
+        invoice_date=parsed_date,
+        status=invoice.status
+    )
+    db.add(db_inv)
+    db.commit()
+    db.refresh(db_inv)
+    return {"success": True, "data": db_inv}
+
+@app.put("/api/invoices/{invoice_id}")
+def update_invoice(invoice_id: int, invoice: InvoiceCreate, db = Depends(get_db)):
+    db_inv = db.query(InvoiceModel).filter(InvoiceModel.id == invoice_id).first()
+    if not db_inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    parsed_date = db_inv.invoice_date
+    if invoice.invoice_date:
+        try:
+            parsed_date = datetime.datetime.fromisoformat(str(invoice.invoice_date).replace("Z", "+00:00"))
+        except Exception:
+            pass
+
+    first_item = invoice.items[0] if invoice.items and len(invoice.items) > 0 else None
+    
+    item_desc = (
+        (first_item.description if first_item else None) or 
+        invoice.item_description or 
+        invoice.customer_name or 
+        db_inv.item_description or 
+        "General Goods"
+    )
+    qty = (
+        (first_item.quantity if first_item else None) or 
+        invoice.quantity or 
+        db_inv.quantity or 
+        1.0
+    )
+    unit_val = (
+        (first_item.unit if first_item else None) or 
+        invoice.unit or 
+        db_inv.unit or 
+        "pcs"
+    )
+    rate_val = (
+        (first_item.rate if first_item else None) or 
+        invoice.rate or 
+        db_inv.rate or 
+        0.0
+    )
+
+    tot = invoice.total_amount
+    tax = invoice.tax_amount
+    grand = invoice.grand_total if invoice.grand_total else tot
+    taxable = invoice.taxable_value or (tot - tax)
+    
+    if rate_val == 0.0 and qty > 0 and taxable > 0:
+        rate_val = taxable / qty
+
+    db_inv.invoice_no = invoice.invoice_no or db_inv.invoice_no
+    db_inv.shop_id = invoice.shop_id if invoice.shop_id is not None else db_inv.shop_id
+    db_inv.customer_name = invoice.customer_name or db_inv.customer_name
+    db_inv.gstin = invoice.gstin if invoice.gstin is not None else db_inv.gstin
+    db_inv.invoice_type = invoice.invoice_type or db_inv.invoice_type
+    db_inv.item_description = item_desc
+    db_inv.quantity = qty
+    db_inv.unit = unit_val
+    db_inv.rate = rate_val
+    db_inv.total_amount = tot
+    db_inv.tax_amount = tax
+    db_inv.taxable_value = taxable
+    db_inv.cgst_percent = invoice.cgst_percent if invoice.cgst_percent is not None else db_inv.cgst_percent
+    db_inv.cgst_amount = invoice.cgst_amount if invoice.cgst_amount is not None else (tax / 2)
+    db_inv.sgst_percent = invoice.sgst_percent if invoice.sgst_percent is not None else db_inv.sgst_percent
+    db_inv.sgst_amount = invoice.sgst_amount if invoice.sgst_amount is not None else (tax / 2)
+    db_inv.round_off = invoice.round_off if invoice.round_off is not None else db_inv.round_off
+    db_inv.grand_total = grand
+    db_inv.amount_paid = invoice.amount_paid if invoice.amount_paid is not None else db_inv.amount_paid
+    db_inv.balance = invoice.balance if invoice.balance is not None else db_inv.balance
+    db_inv.invoice_date = parsed_date
+    db_inv.status = invoice.status or db_inv.status
+
+    db.commit()
+    db.refresh(db_inv)
+    return {"success": True, "data": db_inv}
+
+@app.delete("/api/invoices/{invoice_id}")
+def delete_invoice(invoice_id: int, db = Depends(get_db)):
+    db_inv = db.query(InvoiceModel).filter(InvoiceModel.id == invoice_id).first()
+    if not db_inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    db.delete(db_inv)
+    db.commit()
+    return {"success": True}
+
+# --- PAYMENTS & LEDGER CRUD ---
+@app.get("/api/payments")
+def get_payments(shop_id: Optional[int] = Query(None), db = Depends(get_db)):
+    query = db.query(LedgerModel)
+    if shop_id:
+        query = query.filter(LedgerModel.shop_id == shop_id)
+    payments = query.order_by(LedgerModel.transaction_date.desc()).all()
+    results = []
+    for p in payments:
+        shop = db.query(ShopModel).filter(ShopModel.id == p.shop_id).first() if p.shop_id else None
+        invoice = db.query(InvoiceModel).filter(InvoiceModel.id == p.invoice_id).first() if p.invoice_id else None
+        results.append({
+            "id": p.id,
+            "shop_id": p.shop_id,
+            "shop_no": shop.shop_no if shop else "N/A",
+            "shop_name": shop.name if shop else "Unknown",
+            "invoice_id": p.invoice_id,
+            "invoice_no": invoice.invoice_no if invoice else None,
+            "amount": p.amount,
+            "transaction_type": p.transaction_type,
+            "payment_mode": p.payment_mode,
+            "mode": p.payment_mode,
+            "reference_no": p.reference_no,
+            "notes": p.notes,
+            "payment_date": p.transaction_date.isoformat() if p.transaction_date else None,
+            "transaction_date": p.transaction_date.isoformat() if p.transaction_date else None
+        })
+    return results
+
+@app.post("/api/payments")
+def create_payment(ledger: LedgerCreate, db = Depends(get_db)):
+    try:
+        parsed_date = datetime.datetime.utcnow()
+        date_val = ledger.payment_date or ledger.transaction_date
+        if date_val:
+            try:
+                parsed_date = datetime.datetime.fromisoformat(str(date_val).replace("Z", "+00:00"))
+            except Exception:
+                pass
+
+        pay_mode = ledger.mode or ledger.payment_mode or "UPI"
+        tx_type = ledger.transaction_type or "Credit"
+        s_id = int(ledger.shop_id)
+
+        db_ledger = LedgerModel(
+            shop_id=s_id,
+            invoice_id=int(ledger.invoice_id) if ledger.invoice_id else None,
+            amount=ledger.amount,
+            transaction_type=tx_type,
+            payment_mode=pay_mode,
+            reference_no=ledger.reference_no,
+            notes=ledger.notes,
+            transaction_date=parsed_date
+        )
+        db.add(db_ledger)
+        db.commit()
+        db.refresh(db_ledger)
+        return {"success": True, "data": db_ledger}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.put("/api/payments/{payment_id}")
+def update_payment(payment_id: int, ledger: LedgerCreate, db = Depends(get_db)):
+    db_pay = db.query(LedgerModel).filter(LedgerModel.id == payment_id).first()
+    if not db_pay:
+        raise HTTPException(status_code=404, detail="Payment record not found")
+    try:
+        parsed_date = db_pay.transaction_date
+        date_val = ledger.payment_date or ledger.transaction_date
+        if date_val:
+            try:
+                parsed_date = datetime.datetime.fromisoformat(str(date_val).replace("Z", "+00:00"))
+            except Exception:
+                pass
+
+        pay_mode = ledger.mode or ledger.payment_mode or db_pay.payment_mode or "UPI"
+        tx_type = ledger.transaction_type or db_pay.transaction_type or "Credit"
+        s_id = int(ledger.shop_id) if ledger.shop_id is not None else db_pay.shop_id
+
+        db_pay.shop_id = s_id
+        db_pay.invoice_id = int(ledger.invoice_id) if ledger.invoice_id else db_pay.invoice_id
+        db_pay.amount = ledger.amount
+        db_pay.transaction_type = tx_type
+        db_pay.payment_mode = pay_mode
+        db_pay.reference_no = ledger.reference_no
+        db_pay.notes = ledger.notes
+        db_pay.transaction_date = parsed_date
+
+        db.commit()
+        db.refresh(db_pay)
+        return {"success": True, "data": db_pay}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/api/payments/{payment_id}")
+def delete_payment(payment_id: int, db = Depends(get_db)):
+    db_pay = db.query(LedgerModel).filter(LedgerModel.id == payment_id).first()
+    if not db_pay:
+        raise HTTPException(status_code=404, detail="Payment record not found")
+    db.delete(db_pay)
+    db.commit()
+    return {"success": True}
+
+# --- GLOBAL OPENING BALANCE SETTINGS ENDPOINTS ---
+@app.post("/api/settings/opening-balance")
+def update_global_opening_balance(payload: dict, db: Session = Depends(get_db)):
+    balance_val = payload.get("opening_balance", 0.0)
+    update_mode = payload.get("mode", "replace") 
+    entry_date = payload.get("entry_date", datetime.datetime.now().strftime("%Y-%m-%d"))
+    entered_by = payload.get("entered_by", "Admin")
+    
+    try:
+        balance_val = float(balance_val)
+    except (ValueError, TypeError):
+        balance_val = 0.0
+    
+    setting = db.query(SettingsModel).filter(SettingsModel.key_name == "global_opening_balance").first()
+    history_setting = db.query(SettingsModel).filter(SettingsModel.key_name == "global_opening_balance_history").first()
+    
+    history_list = []
+    if history_setting and history_setting.key_value:
+        try:
+            history_list = json.loads(history_setting.key_value)
+        except:
+            history_list = []
+
+    current_val = float(setting.key_value) if setting and setting.key_value else 0.0
+    
+    if update_mode == "add":
+        new_total = current_val + balance_val
+    else:
+        new_total = balance_val
+        
+    history_entry = {
+        "amount": balance_val,
+        "mode": update_mode,
+        "entry_date": entry_date,
+        "entered_by": entered_by,
+        "timestamp": datetime.datetime.now().isoformat(),
+        "total_after": new_total
+    }
+    history_list.insert(0, history_entry)
+
+    if setting:
+        setting.key_value = str(new_total)
+    else:
+        db.add(SettingsModel(key_name="global_opening_balance", key_value=str(new_total)))
+        
+    if history_setting:
+        history_setting.key_value = json.dumps(history_list)
+    else:
+        db.add(SettingsModel(key_name="global_opening_balance_history", key_value=json.dumps(history_list)))
+        
+    db.commit()
+    
+    return {
+        "success": True, 
+        "opening_balance": new_total,
+        "history": history_list
+    }
+
+@app.get("/api/settings/opening-balance")
+def get_global_opening_balance(db: Session = Depends(get_db)):
+    setting = db.query(SettingsModel).filter(SettingsModel.key_name == "global_opening_balance").first()
+    history_setting = db.query(SettingsModel).filter(SettingsModel.key_name == "global_opening_balance_history").first()
+    
+    val = float(setting.key_value) if setting and setting.key_value else 0.0
+    history_list = []
+    if history_setting and history_setting.key_value:
+        try:
+            history_list = json.loads(history_setting.key_value)
+        except:
+            history_list = []
+            
+    return {
+        "opening_balance": val,
+        "history": history_list
+    }
+
+# --- COLLECTIONS WITH GLOBAL OPENING BALANCE ---
+@app.get("/api/collections")
+def get_collections(db = Depends(get_db)):
+    shops = db.query(ShopModel).all()
+    settings_records = db.query(SettingsModel).all()
+    settings_map = {s.key_name: s.key_value for s in settings_records}
+    try:
+        global_opening = float(settings_map.get("global_opening_balance", 0.0))
+    except ValueError:
+        global_opening = 0.0
+
+    results = []
+    total_outstanding_all = 0.0
+    shops_with_dues_count = 0
+    total_collected_all = 0.0
+    total_revenue_all = 0.0
+    total_purchases_all = 0.0
+
+    for shop in shops:
+        invoices = db.query(InvoiceModel).filter(InvoiceModel.shop_id == shop.id).all()
+        payments = db.query(LedgerModel).filter(LedgerModel.shop_id == shop.id).all()
+        
+        purchase_amount = sum([inv.grand_total if (inv.grand_total and inv.grand_total > 0) else (inv.total_amount or 0) for inv in invoices if inv.invoice_type and inv.invoice_type.strip().upper() == "PURCHASE"])
+        
+        sales_invoices = [inv for inv in invoices if not inv.invoice_type or inv.invoice_type.strip().upper() in ["SALES", "WORK SALE"]]
+        total_invoiced = sum([inv.grand_total if (inv.grand_total and inv.grand_total > 0) else (inv.total_amount or 0) for inv in sales_invoices])
+        
+        total_paid = sum([p.amount for p in payments if p.amount and p.transaction_type == "Credit"])
+
+        total_revenue_all += total_invoiced
+        total_purchases_all += purchase_amount
+        total_collected_all += total_paid
+
+        shop_opening = global_opening if shop.id == shops[0].id else 0.0 
+        
+        outstanding = (shop_opening - purchase_amount) + total_invoiced - total_paid
+        if outstanding < 0:
+            outstanding = 0.0
+
+        if outstanding > 0:
+            shops_with_dues_count += 1
+
+        total_outstanding_all += outstanding
+
+        results.append({
+            "id": shop.id,
+            "shop_id": shop.id,
+            "shop_no": shop.shop_no,
+            "shop_name": shop.name,
+            "name": shop.name,
+            "location": shop.location or "—",
+            "opening": shop_opening,
+            "purchase_amount": purchase_amount,
+            "invoiced": total_invoiced,
+            "paid": total_paid,
+            "outstanding": outstanding
+        })
+
+    net_profit_val = total_revenue_all - total_purchases_all
+
+    return {
+        "global_opening_balance": global_opening,
+        "total_revenue": total_revenue_all,
+        "total_purchases": total_purchases_all,
+        "net_profit": net_profit_val,
+        "total_outstanding": total_outstanding_all,
+        "shops_with_dues": shops_with_dues_count,
+        "total_collected": total_collected_all,
+        "records": results,
+        "rows": results,
+        "data": results
+    }
+
+@app.post("/api/collections")
+def create_collection(col: CollectionCreate, db = Depends(get_db)):
+    try:
+        parsed_date = datetime.datetime.utcnow()
+        if col.collection_date:
+            try:
+                parsed_date = datetime.datetime.fromisoformat(str(col.collection_date).replace("Z", "+00:00"))
+            except Exception:
+                pass
+
+        db_col = CollectionModel(
+            shop_id=int(col.shop_id),
+            collected_amount=col.collected_amount,
+            collection_date=parsed_date,
+            collected_by=col.collected_by,
+            status=col.status
+        )
+        db.add(db_col)
+        db.commit()
+        db.refresh(db_col)
+        return {"success": True, "data": db_col}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.delete("/api/collections/{col_id}")
+def delete_collection(col_id: int, db = Depends(get_db)):
+    db_col = db.query(CollectionModel).filter(CollectionModel.id == col_id).first()
+    if not db_col:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    db.delete(db_col)
+    db.commit()
+    return {"success": True}
+
+# --- SETTINGS CRUD ---
+@app.get("/api/settings")
+def get_settings(db = Depends(get_db)):
+    settings = db.query(SettingsModel).all()
+    return {s.key_name: s.key_value for s in settings}
+
+@app.post("/api/settings")
+def update_setting(setting: SettingsUpdate, db = Depends(get_db)):
+    db_setting = db.query(SettingsModel).filter(SettingsModel.key_name == setting.key_name).first()
+    if db_setting:
+        db_setting.key_value = setting.key_value
+    else:
+        db_setting = SettingsModel(key_name=setting.key_name, key_value=setting.key_value)
+        db.add(db_setting)
+    db.commit()
+    return {"success": True, "data": {setting.key_name: setting.key_value}}
+
+# --- REPORTS & ANALYTICS ---
+@app.get("/api/reports/daily")
+def get_daily_report(day: str = None, db = Depends(get_db)):
+    if not day:
+        day = datetime.datetime.now().strftime("%Y-%m-%d")
+    
+    invoices = db.query(InvoiceModel).all()
+    day_invoices = []
+    
+    purchase_total = 0.0
+    sale_total = 0.0
+    purchase_gst = 0.0
+    sale_gst = 0.0
+    total_collections = 0.0
+
+    for inv in invoices:
+        inv_date_obj = getattr(inv, "created_at", None) or getattr(inv, "date", None) or getattr(inv, "invoice_date", None)
+        inv_date_str = ""
+        if inv_date_obj:
+            inv_date_str = str(inv_date_obj)[:10]
+        
+        if inv_date_str == day:
+            shop = db.query(ShopModel).filter(ShopModel.id == inv.shop_id).first() if hasattr(inv, "shop_id") else None
+            inv_type = (getattr(inv, "invoice_type", None) or "SALES").strip().upper()
+            g_total = float(getattr(inv, "grand_total", 0) if (getattr(inv, "grand_total", 0) and getattr(inv, "grand_total", 0) > 0) else getattr(inv, "total_amount", 0) or 0)
+            
+            gst_amount = float(getattr(inv, "gst_amount", 0) or getattr(inv, "tax_amount", 0) or (g_total * 0.05 / 1.05))
+
+            if inv_type == "PURCHASE":
+                purchase_total += g_total
+                purchase_gst += gst_amount
+            else:
+                sale_total += g_total
+                sale_gst += gst_amount
+
+            day_invoices.append({
+                "id": getattr(inv, "id", 0),
+                "invoice_no": getattr(inv, "invoice_no", None) or f"INV-{getattr(inv, 'id', 0)}",
+                "shop_no": shop.shop_no if shop else "—",
+                "shop_name": shop.name if shop else "—",
+                "invoice_type": inv_type,
+                "grand_total": g_total
+            })
+
+    payments = db.query(LedgerModel).all() if 'LedgerModel' in globals() else []
+    for p in payments:
+        p_date_obj = getattr(p, "date", None) or getattr(p, "created_at", None)
+        p_date_str = str(p_date_obj)[:10] if p_date_obj else ""
+        if p_date_str == day and getattr(p, "transaction_type", "") == "Credit":
+            total_collections += float(getattr(p, "amount", 0) or 0)
+
+    return {
+        "day": day,
+        "purchase_invoice_total": purchase_total,
+        "sale_invoice_total": sale_total,
+        "gst_collected_sales": sale_gst,
+        "gst_collected_purchase": purchase_gst,
+        "collections": total_collections,
+        "invoices": day_invoices
+    }
+
+@app.get("/api/reports/monthly")
+def get_monthly_report(month: str = None, db = Depends(get_db)):
+    if not month:
+        month = datetime.datetime.now().strftime("%Y-%m")
+    
+    invoices = db.query(InvoiceModel).all()
+    payments = db.query(LedgerModel).all() if 'LedgerModel' in globals() else []
+    
+    daily_map = {}
+    purchase_total = 0.0
+    sale_total = 0.0
+    purchase_gst = 0.0
+    sale_gst = 0.0
+    total_collected = 0.0
+    
+    for inv in invoices:
+        inv_date_obj = getattr(inv, "created_at", None) or getattr(inv, "date", None) or getattr(inv, "invoice_date", None)
+        inv_date_str = str(inv_date_obj)[:10] if inv_date_obj else ""
+            
+        if inv_date_str.startswith(month):
+            inv_type = (getattr(inv, "invoice_type", None) or "SALES").strip().upper()
+            g_total = float(getattr(inv, "grand_total", 0) if (getattr(inv, "grand_total", 0) and getattr(inv, "grand_total", 0) > 0) else getattr(inv, "total_amount", 0) or 0)
+            gst_amount = float(getattr(inv, "gst_amount", 0) or getattr(inv, "tax_amount", 0) or (g_total * 0.05 / 1.05))
+
+            if inv_type == "PURCHASE":
+                purchase_total += g_total
+                purchase_gst += gst_amount
+            else:
+                sale_total += g_total
+                sale_gst += gst_amount
+                
+            if inv_date_str not in daily_map:
+                daily_map[inv_date_str] = {"date": inv_date_str, "sale": 0.0, "purchase": 0.0}
+            if inv_type == "PURCHASE":
+                daily_map[inv_date_str]["purchase"] += g_total
+            else:
+                daily_map[inv_date_str]["sale"] += g_total
+
+    for p in payments:
+        p_date_obj = getattr(p, "date", None) or getattr(p, "created_at", None)
+        p_date_str = str(p_date_obj)[:10] if p_date_obj else ""
+        if p_date_str.startswith(month) and getattr(p, "transaction_type", "") == "Credit":
+            total_collected += float(getattr(p, "amount", 0) or 0)
+
+    sorted_daily = sorted(list(daily_map.values()), key=lambda x: x["date"])
+
+    return {
+        "month": month,
+        "purchase_invoice_total": purchase_total,
+        "sale_invoice_total": sale_total,
+        "gst_collected_sales": sale_gst,
+        "gst_collected_purchase": purchase_gst,
+        "total_collected": total_collected,
+        "daily": sorted_daily
+    }
+
+@app.get("/api/statement/{shop_id}")
+def get_shop_statement(shop_id: int, start: str = None, end: str = None, db = Depends(get_db)):
+    shop = db.query(ShopModel).filter(ShopModel.id == shop_id).first()
+    if not shop:
+        return {"error": "Shop not found"}
+
+    settings_records = db.query(SettingsModel).all()
+    settings_map = {s.key_name: s.key_value for s in settings_records}
+    try:
+        global_opening = float(settings_map.get("global_opening_balance", 0.0))
+    except ValueError:
+        global_opening = 0.0
+
+    invoices = db.query(InvoiceModel).filter(InvoiceModel.shop_id == shop_id).all()
+    payments = db.query(LedgerModel).filter(LedgerModel.shop_id == shop_id).all()
+
+    rows = []
+    
+    total_purchase_inv = 0.0
+    total_sale_inv = 0.0
+    gst_collected_sales = 0.0
+    gst_collected_purchase = 0.0
+
+    for inv in invoices:
+        inv_date = getattr(inv, "date", None) or getattr(inv, "created_at", None) or "2026-09-15"
+        inv_type = (getattr(inv, "invoice_type", None) or "SALES").strip().upper()
+        amount = float(getattr(inv, "grand_total", 0) if (getattr(inv, "grand_total", 0) and getattr(inv, "grand_total", 0) > 0) else getattr(inv, "total_amount", 0) or 0)
+        
+        gst_amount = float(getattr(inv, "gst_amount", 0) or getattr(inv, "tax_amount", 0) or (amount * 0.05 / 1.05))
+
+        particulars = f"Invoice: {getattr(inv, 'invoice_no', 'INV')}"
+        if inv_type == "PURCHASE":
+            particulars = f"Purchase GST: {getattr(inv, 'invoice_no', 'INV')}"
+            total_purchase_inv += amount
+            gst_collected_purchase += gst_amount
+            rows.append({
+                "date": str(inv_date)[:10],
+                "particulars": particulars,
+                "debit": amount,
+                "credit": 0.0,
+                "type": "PURCHASE"
+            })
+        else:
+            total_sale_inv += amount
+            gst_collected_sales += gst_amount
+            rows.append({
+                "date": str(inv_date)[:10],
+                "particulars": particulars,
+                "debit": 0.0,
+                "credit": amount,
+                "type": "SALES"
+            })
+
+    for p in payments:
+        p_date = getattr(p, "date", None) or getattr(p, "created_at", None) or "2026-09-15"
+        amt = float(getattr(p, "amount", 0) or 0)
+        t_type = getattr(p, "transaction_type", "Credit")
+        
+        rows.append({
+            "date": str(p_date)[:10],
+            "particulars": f"Payment Received ({t_type})",
+            "debit": amt if t_type == "Debit" else 0.0,
+            "credit": amt if t_type == "Credit" else 0.0,
+            "type": "PAYMENT"
+        })
+
+    rows = sorted(rows, key=lambda x: x["date"])
+
+    opening_balance = global_opening if shop_id == 1 else 0.0 
+    running_balance = opening_balance
+    
+    final_rows = []
+    total_debit = 0.0
+    total_credit = 0.0
+
+    for r in rows:
+        debit = r["debit"]
+        credit = r["credit"]
+        total_debit += debit
+        total_credit += credit
+        
+        running_balance = running_balance + debit - credit
+        
+        final_rows.append({
+            "date": r["date"],
+            "particulars": r["particulars"],
+            "debit": debit,
+            "credit": credit,
+            "balance": running_balance
+        })
+
+    seller_info = {
+        "name": settings_map.get("company_name", "Auro Products"),
+        "address": settings_map.get("company_address", "Tiruchirappalli"),
+        "gstin": settings_map.get("company_gstin", "33AAAAA0000A1Z5")
+    }
+
+    return {
+        "seller": seller_info,
+        "shop": {
+            "id": shop.id,
+            "shop_no": shop.shop_no,
+            "name": shop.name,
+            "location": shop.location
+        },
+        "start": start or "2026-09-01",
+        "end": end or "2026-09-30",
+        "opening_balance": opening_balance,
+        "rows": final_rows,
+        "total_debit": total_debit,
+        "total_credit": total_credit,
+        "closing_balance": running_balance,
+        "total_purchase": total_purchase_inv,
+        "total_sale": total_sale_inv,
+        "gst_collected_sales": gst_collected_sales,
+        "gst_collected_purchase": gst_collected_purchase
+    }
+
+@app.get("/api/analytics/waste")
+def get_waste_analytics(db = Depends(get_db)):
+    try:
+        box_entries = db.query(EntryModel).all()
+    except Exception:
+        box_entries = []
+    
+    total_boxes = sum([b.quantity for b in box_entries if b and b.quantity])
+    total_waste = sum([b.waste_kg for b in box_entries if b and b.waste_kg])
+    
+    shop_waste = {}
+    month_waste = defaultdict(float)
+    type_month_waste = defaultdict(lambda: {"beer": 0.0, "brandy": 0.0})
+
+    for b in box_entries:
+        if not b:
+            continue
+        
+        shop = db.query(ShopModel).filter(ShopModel.id == b.shop_id).first()
+        s_name = shop.name if shop else "Unknown"
+        if s_name not in shop_waste:
+            shop_waste[s_name] = {"shop": s_name, "boxes": 0, "waste": 0.0}
+        shop_waste[s_name]["boxes"] += getattr(b, "quantity", 0) or 0
+        shop_waste[s_name]["waste"] += getattr(b, "waste_kg", 0) or 0
+
+        entry_date = getattr(b, "date", None) or getattr(b, "created_at", None)
+        if entry_date:
+            if isinstance(entry_date, str):
+                try:
+                    parsed_date = datetime.datetime.fromisoformat(entry_date)
+                except ValueError:
+                    parsed_date = datetime.datetime.now()
+            else:
+                parsed_date = entry_date
+            
+            month_key = parsed_date.strftime("%b %Y")
+            waste_val = getattr(b, "waste_kg", 0) or 0
+            
+            month_waste[month_key] += waste_val
+
+            item_type = str(getattr(b, "item_type", "") or getattr(b, "product_name", "")).lower()
+            if "beer" in item_type:
+                type_month_waste[month_key]["beer"] += waste_val
+            elif "brandy" in item_type:
+                type_month_waste[month_key]["brandy"] += waste_val
+            else:
+                type_month_waste[month_key]["beer"] += waste_val / 2
+                type_month_waste[month_key]["brandy"] += waste_val / 2
+
+    by_shop = list(shop_waste.values())
+    by_month = [{"month": k, "waste": v} for k, v in month_waste.items()]
+    by_type_month = [
+        {"month": k, "beer": v["beer"], "brandy": v["brandy"]} 
+        for k, v in type_month_waste.items()
+    ]
+
+    return {
+        "total_boxes": total_boxes,
+        "total_waste": total_waste,
+        "by_shop": by_shop,
+        "by_month": by_month,
+        "by_type_month": by_type_month
+    }
+
+# --- DASHBOARD ENDPOINT ---
+@app.get("/api/dashboard")
+def get_dashboard(db: Session = Depends(get_db)):
+    total_shops = db.query(ShopModel).count()
+    total_boxes = db.query(func.coalesce(func.sum(EntryModel.quantity), 0)).scalar()
+    
+    waste_divisor = 12.0
+    setting_row = db.query(SettingsModel).filter(SettingsModel.key_name == "waste_divisor").first()
+    if setting_row and setting_row.key_value:
+        try:
+            waste_divisor = float(setting_row.key_value)
+        except ValueError:
+            pass
+            
+    total_waste_kg = round(total_boxes / waste_divisor, 2)
+    
+    invoices = db.query(InvoiceModel).all()
+    settings_records = db.query(SettingsModel).all()
+    settings_map = {s.key_name: s.key_value for s in settings_records}
+    try:
+        global_opening = float(settings_map.get("global_opening_balance", 0.0))
+    except ValueError:
+        global_opening = 0.0
+    
+    sales_invoices = [inv for inv in invoices if not inv.invoice_type or inv.invoice_type.strip().upper() in ["SALES", "WORK SALE"]]
+    purchase_invoices = [inv for inv in invoices if inv.invoice_type and inv.invoice_type.strip().upper() == "PURCHASE"]
+    
+    total_revenue = sum([inv.grand_total if (inv.grand_total and inv.grand_total > 0) else (inv.total_amount or 0) for inv in sales_invoices])
+    total_purchases_with_gst = sum([inv.grand_total if (inv.grand_total and inv.grand_total > 0) else (inv.total_amount or 0) for inv in purchase_invoices])
+    
+    net_profit = total_revenue - total_purchases_with_gst
+
+    adjusted_opening_balance = global_opening - total_purchases_with_gst
+
+    total_collected = db.query(func.coalesce(func.sum(LedgerModel.amount), 0)).filter(LedgerModel.transaction_type == "Credit").scalar()
+    
+    outstanding_balance = adjusted_opening_balance + total_revenue - total_collected
+    if outstanding_balance < 0:
+        outstanding_balance = 0.0
+
+    reminders = []
+    overdue_count = 0
+    due_today_count = 0
+    upcoming_count = 0
+    today = datetime.datetime.utcnow().date()
+
+    shops = db.query(ShopModel).all()
+    for shop in shops:
+        latest_entry = db.query(EntryModel).filter(EntryModel.shop_id == shop.id).order_by(EntryModel.entry_date.desc()).first()
+        cycle_days = shop.cycle_days or 7
+        
+        if not latest_entry:
+            status = "no_entry"
+            next_pickup = None
+            last_entry_date = None
+            overdue_count += 1
+        else:
+            last_entry_date = latest_entry.entry_date
+            if isinstance(last_entry_date, datetime.datetime):
+                entry_date_obj = last_entry_date.date()
+            elif isinstance(last_entry_date, str):
+                try:
+                    entry_date_obj = datetime.datetime.fromisoformat(last_entry_date[:10]).date()
+                except Exception:
+                    entry_date_obj = today
+            else:
+                entry_date_obj = last_entry_date
+                
+            next_pickup = entry_date_obj + timedelta(days=cycle_days)
+            delta_days = (today - next_pickup).days
+            if delta_days > 0:
+                status = "overdue"
+                overdue_count += 1
+            elif delta_days == 0:
+                status = "due_today"
+                due_today_count += 1
+            else:
+                status = "upcoming"
+                upcoming_count += 1
+
+        reminders.append({
+            "shop_id": shop.id,
+            "shop_no": shop.shop_no,
+            "shop_name": shop.name,
+            "location": shop.location,
+            "cycle_days": cycle_days,
+            "last_entry": str(last_entry_date) if last_entry_date else None,
+            "next_pickup": str(next_pickup) if next_pickup else None,
+            "status": status
+        })
+
+    recent_invoices = db.query(InvoiceModel).order_by(InvoiceModel.id.desc()).limit(5).all()
+
+    return {
+        "shops_count": total_shops,
+        "total_boxes": total_boxes,
+        "total_waste_kg": total_waste_kg,
+        "opening_balance": round(adjusted_opening_balance, 2),
+        "raw_opening_balance": round(global_opening, 2),
+        "total_purchase_with_gst": round(total_purchases_with_gst, 2),
+        "total_invoiced": total_revenue,
+        "total_revenue": round(total_revenue, 2),
+        "net_profit": round(net_profit, 2),
+        "outstanding_balance": round(outstanding_balance, 2),
+        "overdue_count": overdue_count,
+        "due_today_count": due_today_count,
+        "upcoming_count": upcoming_count,
+        "reminders": reminders,
+        "recent_invoices": [
+            {
+                "id": i.id,
+                "invoice_no": i.invoice_no,
+                "shop_no": "",
+                "shop_name": i.customer_name,
+                "total_amount": i.grand_total if (i.grand_total and i.grand_total > 0) else i.total_amount
+            } for i in recent_invoices
+        ]
+    }
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("server:app", host="127.0.0.1", port=8000, reload=True)

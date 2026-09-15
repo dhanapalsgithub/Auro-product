@@ -5,7 +5,7 @@ import { PageHeader, Card } from "@/components/Shell";
 import Pager from "@/components/Pager";
 import { inr, fmtDate, exportToCsv } from "@/lib/helpers";
 import { toast } from "sonner";
-import { Receipt, Plus, Download, Search, Eye, Trash2, X, IndianRupee, Wallet } from "lucide-react";
+import { Receipt, Plus, Download, Search, Eye, Edit, Trash2, X, IndianRupee, Wallet } from "lucide-react";
 import { BOX_TYPES } from "@/lib/boxTypes";
 
 const PAGE_SIZE = 10;
@@ -14,13 +14,17 @@ const STATUS = {
   partial: "bg-amber-500/15 text-amber-300 border-amber-500/30",
   unpaid: "bg-red-500/15 text-red-300 border-red-500/30",
 };
-const blankItem = () => ({ description: BOX_TYPES[0], hsn: "4819", unit: "PCS", quantity: "", rate: "" });
+const blankItem = () => ({ description: BOX_TYPES[0], hsn: "4819", unit: "PCS", quantity: 1, rate: 16 });
 
 export default function Invoices() {
   const navigate = useNavigate();
   const [invoices, setInvoices] = useState([]);
   const [shops, setShops] = useState([]);
   const [settings, setSettings] = useState(null);
+  
+  // Admin-only permission check for edit and delete (creation is allowed for all users)
+  const [canManage] = useState(localStorage.getItem("auro_can_edit") === "true");
+
   const [search, setSearch] = useState("");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
@@ -28,68 +32,201 @@ export default function Invoices() {
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
   const [payFor, setPayFor] = useState(null);
+  const [editId, setEditId] = useState(null);
 
   const [shopId, setShopId] = useState("");
   const [invDate, setInvDate] = useState(new Date().toISOString().slice(0, 10));
+  const [invoiceType, setInvoiceType] = useState("SALES");
   const [items, setItems] = useState([blankItem()]);
 
   const load = () => api.get("/invoices", { params: { search, start, end } }).then((r) => { setInvoices(r.data); setPage(1); });
-  useEffect(() => { load(); /* eslint-disable-next-line */ }, [search, start, end]);
+  
+  useEffect(() => { load(); }, [search, start, end]);
+  
   useEffect(() => {
     api.get("/shops").then((r) => setShops(r.data));
-    api.get("/settings").then((r) => { setSettings(r.data); setItems([{ ...blankItem(), rate: String(r.data.rate_beer || r.data.default_rate || 16) }]); });
+    api.get("/settings").then((r) => { 
+      setSettings(r.data); 
+      const defaultRate = Number(r.data.rate_beer || r.data.default_rate || 16);
+      setItems([{ ...blankItem(), rate: defaultRate }]); 
+    });
   }, []);
 
   const rateFor = (type) => {
     const t = (type || "").toLowerCase();
-    if (t.includes("beer")) return settings?.rate_beer ?? settings?.default_rate ?? 16;
-    if (t.includes("brandy")) return settings?.rate_brandy ?? settings?.default_rate ?? 16;
-    return settings?.default_rate ?? 16;
+    if (t.includes("beer")) return Number(settings?.rate_beer ?? settings?.default_rate ?? 16);
+    if (t.includes("brandy")) return Number(settings?.rate_brandy ?? settings?.default_rate ?? 16);
+    return Number(settings?.default_rate ?? 16);
   };
 
   const pageCount = Math.max(1, Math.ceil(invoices.length / PAGE_SIZE));
   const rows = useMemo(() => invoices.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [invoices, page]);
 
-  const taxable = items.reduce((s, it) => s + (parseFloat(it.quantity || 0) * parseFloat(it.rate || 0)), 0);
-  const cgp = settings?.cgst_percent || 9, sgp = settings?.sgst_percent || 9;
+  const taxable = items.reduce((s, it) => s + (Number(it.quantity || 0) * Number(it.rate || 0)), 0);
+  const cgp = settings?.cgst_percent || 2.5, sgp = settings?.sgst_percent || 2.5;
   const cgst = taxable * cgp / 100, sgst = taxable * sgp / 100;
   const total = Math.round(taxable + cgst + sgst);
 
-  const setItem = (i, k, v) => setItems((arr) => arr.map((it, idx) => idx === i ? { ...it, [k]: v } : it));
-  const addItem = () => setItems((arr) => [...arr, { ...blankItem(), rate: String(settings?.rate_beer || settings?.default_rate || 16) }]);
+  const setItem = (i, k, v) => setItems((arr) => arr.map((it, idx) => idx === i ? { ...it, [k]: k === 'quantity' || k === 'rate' ? (v === '' ? '' : Number(v)) : v } : it));
+  const addItem = () => setItems((arr) => [...arr, { ...blankItem(), rate: Number(settings?.rate_beer || settings?.default_rate || 16) }]);
   const removeItem = (i) => setItems((arr) => arr.length === 1 ? arr : arr.filter((_, idx) => idx !== i));
 
-  const create = async (e) => {
-    e.preventDefault();
-    if (!shopId) { toast.error("Select a shop"); return; }
-    const clean = items.filter((it) => it.quantity && it.rate).map((it) => ({ ...it, quantity: parseFloat(it.quantity), rate: parseFloat(it.rate) }));
-    if (clean.length === 0) { toast.error("Add at least one line item"); return; }
-    setSaving(true);
-    try {
-      const res = await api.post("/invoices", { shop_id: shopId, invoice_date: new Date(invDate).toISOString(), items: clean, cgst_percent: cgp, sgst_percent: sgp });
-      toast.success(`Invoice ${res.data.invoice_no} created`);
-      setModal(false); setItems([{ ...blankItem(), rate: String(settings?.default_rate || 16) }]);
-      navigate(`/invoices/${res.data.id}`);
-    } catch (err) { toast.error("Failed to create invoice"); }
-    finally { setSaving(false); }
+  const handleViewInvoice = (inv) => {
+    const targetId = inv.id || inv._id || inv.invoice_id;
+    if (!targetId) {
+      toast.error("Invalid invoice reference ID");
+      return;
+    }
+    navigate(`/invoices/${targetId}`);
   };
 
-  const del = async (id) => { if (!window.confirm("Delete invoice?")) return; await api.delete(`/invoices/${id}`); toast.success("Deleted"); load(); };
+  const handleOpenCreate = () => {
+    setEditId(null);
+    setShopId("");
+    setInvDate(new Date().toISOString().slice(0, 10));
+    setInvoiceType("SALES");
+    setItems([{ ...blankItem(), rate: Number(settings?.default_rate || 16) }]);
+    setModal(true);
+  };
+
+  const handleOpenEdit = (inv) => {
+    if (!canManage) {
+      toast.error("Unauthorized: Only admins can edit invoices");
+      return;
+    }
+    const targetId = inv.id || inv._id;
+    setEditId(targetId);
+    setShopId(inv.shop_id || inv.shopId || "");
+    setInvoiceType(inv.invoice_type || "SALES");
+    
+    if (inv.invoice_date) {
+      setInvDate(inv.invoice_date.slice(0, 10));
+    }
+    
+    if (inv.items && inv.items.length > 0) {
+      setItems(inv.items.map(it => ({
+        description: it.description || BOX_TYPES[0],
+        hsn: it.hsn || "4819",
+        unit: it.unit || "PCS",
+        quantity: it.quantity || 1,
+        rate: it.rate || 16
+      })));
+    } else {
+      setItems([{ ...blankItem(), rate: Number(settings?.default_rate || 16) }]);
+    }
+    
+    setModal(true);
+  };
+
+  const saveInvoice = async (e) => {
+    e.preventDefault();
+    if (!canManage && editId) {
+      toast.error("Unauthorized: Only admins can edit invoices");
+      return;
+    }
+    if (!shopId) { toast.error("Select a shop"); return; }
+    
+    const clean = items.filter((it) => it.quantity !== "" && it.rate !== "").map((it) => ({ 
+      ...it, 
+      quantity: Number(it.quantity), 
+      rate: Number(it.rate),
+      amount: Number(it.quantity) * Number(it.rate)
+    }));
+
+    if (clean.length === 0) { toast.error("Add at least one line item"); return; }
+    
+    const calcTaxable = clean.reduce((s, it) => s + it.amount, 0);
+    const calcCgst = calcTaxable * cgp / 100;
+    const calcSgst = calcTaxable * sgp / 100;
+    const calcTotal = Math.round(calcTaxable + calcCgst + calcSgst);
+    const calcTaxAmount = calcCgst + calcSgst;
+
+    setSaving(true);
+    try {
+      let parsedDate = invDate;
+      if (invDate.includes("-") && invDate.split("-")[0].length === 2) {
+        const [d, m, y] = invDate.split("-");
+        parsedDate = `${y}-${m}-${d}`;
+      }
+      const formattedDate = new Date(`${parsedDate}T00:00:00Z`).toISOString();
+
+      const payload = { 
+        shop_id: shopId, 
+        invoice_date: formattedDate, 
+        invoice_type: invoiceType,
+        items: clean, 
+        cgst_percent: cgp, 
+        sgst_percent: sgp,
+        total_amount: calcTotal,
+        tax_amount: calcTaxAmount
+      };
+
+      if (editId) {
+        await api.put(`/invoices/${editId}`, payload);
+        toast.success("Invoice updated successfully");
+        setModal(false);
+        load();
+      } else {
+        const res = await api.post("/invoices", payload);
+        toast.success(`Invoice ${res.data.invoice_no} created`);
+        setModal(false); 
+        navigate(`/invoices/${res.data.id || res.data._id}`);
+      }
+    } catch (err) { 
+      toast.error(editId ? "Failed to update invoice" : "Failed to create invoice"); 
+    } finally { 
+      setSaving(false); 
+    }
+  };
+
+  const del = async (id) => { 
+    if (!canManage) {
+      toast.error("Unauthorized: Only admins can delete invoices");
+      return;
+    }
+    if (!window.confirm("Delete invoice?")) return; 
+    try {
+      await api.delete(`/invoices/${id}`); 
+      toast.success("Deleted"); 
+      load(); 
+    } catch (err) {
+      toast.error("Failed to delete invoice");
+    }
+  };
 
   const doExport = () => exportToCsv("invoices.csv", invoices, [
-    { label: "Invoice No", accessor: "invoice_no" }, { label: "Date", accessor: (r) => fmtDate(r.invoice_date) },
-    { label: "Shop No", accessor: "shop_no" }, { label: "Shop", accessor: "shop_name" },
-    { label: "Taxable", accessor: "taxable" }, { label: "Total", accessor: "grand_total" },
-    { label: "Paid", accessor: "amount_paid" }, { label: "Balance", accessor: "balance" }, { label: "Status", accessor: "status" },
+    { label: "Invoice No", accessor: "invoice_no" }, 
+    { label: "Date", accessor: (r) => fmtDate(r.invoice_date) },
+    { label: "Type", accessor: "invoice_type" },
+    { 
+      label: "Shop No", 
+      accessor: (r) => {
+        const foundShop = shops.find(s => String(s.id || s._id) === String(r.shop_id || r.shopId));
+        return r.shop_no || r.shopNo || foundShop?.shop_no || "";
+      } 
+    }, 
+    { 
+      label: "Shop", 
+      accessor: (r) => {
+        const foundShop = shops.find(s => String(s.id || s._id) === String(r.shop_id || r.shopId));
+        return r.shop_name || r.shopName || foundShop?.name || "";
+      } 
+    },
+    { label: "Taxable", accessor: "taxable" }, 
+    { label: "Total", accessor: (r) => r.total_amount ?? r.grand_total },
+    { label: "Paid", accessor: "amount_paid" }, 
+    { label: "Balance", accessor: (r) => r.balance ?? r.total_amount ?? r.grand_total }, 
+    { label: "Status", accessor: "status" },
   ]);
 
   return (
     <div>
-      <PageHeader title="GST Invoices" subtitle="Tamil Nadu Tax Invoices · 18% GST (CGST 9% + SGST 9%)" icon={Receipt}>
+      <PageHeader title="GST Invoices" subtitle="Tamil Nadu Tax Invoices · 5% GST (CGST 2.5% + SGST 2.5%)" icon={Receipt}>
         <button data-testid="export-invoices-button" onClick={doExport} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 transition">
           <Download className="h-4 w-4" /> Export
         </button>
-        <button data-testid="new-invoice-button" onClick={() => setModal(true)} className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 px-4 py-2 text-sm font-semibold text-slate-900 active:scale-95 transition">
+        {/* Creation is allowed for all users */}
+        <button data-testid="new-invoice-button" onClick={handleOpenCreate} className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 px-4 py-2 text-sm font-semibold text-slate-900 active:scale-95 transition">
           <Plus className="h-4 w-4" /> New Invoice
         </button>
       </PageHeader>
@@ -112,29 +249,45 @@ export default function Invoices() {
           <table className="w-full text-sm" data-testid="invoices-table">
             <thead>
               <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wider text-slate-500 font-mono">
-                <th className="p-4">Invoice</th><th className="p-4">Date</th><th className="p-4">Shop</th>
-                <th className="p-4 text-right">Total</th><th className="p-4 text-right">Balance</th><th className="p-4 text-center">Status</th><th className="p-4 text-right">Actions</th>
+                <th className="p-4">Invoice</th><th className="p-4">Date</th><th className="p-4">Type</th><th className="p-4">Shop</th>
+                <th className="p-4 text-right">Total</th><th className="p-4 text-right">Balance</th><th className="p-4 text-center">Status</th>
+                <th className="p-4 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {rows.map((i) => (
-                <tr key={i.id} data-testid={`invoice-row-${i.invoice_no}`} className="hover:bg-white/5 transition-colors">
-                  <td className="p-4 font-mono text-cyan-300 cursor-pointer" onClick={() => navigate(`/invoices/${i.id}`)}>{i.invoice_no}</td>
-                  <td className="p-4 text-slate-400 font-mono">{fmtDate(i.invoice_date)}</td>
-                  <td className="p-4">{i.shop_no} · {i.shop_name}</td>
-                  <td className="p-4 text-right font-mono">{inr(i.grand_total)}</td>
-                  <td className="p-4 text-right font-mono text-amber-300">{inr(i.balance ?? i.grand_total)}</td>
-                  <td className="p-4 text-center"><span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${STATUS[i.status] || STATUS.unpaid}`}>{(i.status || "unpaid").toUpperCase()}</span></td>
-                  <td className="p-4">
-                    <div className="flex items-center justify-end gap-1.5">
-                      {i.status !== "paid" && <button data-testid={`pay-invoice-${i.invoice_no}`} onClick={() => setPayFor(i)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-emerald-300" title="Record payment"><Wallet className="h-4 w-4" /></button>}
-                      <button data-testid={`view-invoice-${i.invoice_no}`} onClick={() => navigate(`/invoices/${i.id}`)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-cyan-300"><Eye className="h-4 w-4" /></button>
-                      <button data-testid={`delete-invoice-${i.invoice_no}`} onClick={() => del(i.id)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-red-400"><Trash2 className="h-4 w-4" /></button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {rows.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-slate-500">No invoices yet. Create your first GST invoice.</td></tr>}
+              {rows.map((i) => {
+                const matchedShop = shops.find(s => String(s.id || s._id) === String(i.shop_id || i.shopId));
+                const displayShopNo = i.shop_no || i.shopNo || matchedShop?.shop_no || "";
+                const displayShopName = i.shop_name || i.shopName || matchedShop?.name || "Unknown Shop";
+
+                return (
+                  <tr key={i.id || i._id} data-testid={`invoice-row-${i.invoice_no}`} className="hover:bg-white/5 transition-colors">
+                    <td className="p-4 font-mono text-cyan-300 cursor-pointer" onClick={() => handleViewInvoice(i)}>{i.invoice_no}</td>
+                    <td className="p-4 text-slate-400 font-mono">{fmtDate(i.invoice_date)}</td>
+                    <td className="p-4"><span className="text-xs font-semibold px-2 py-0.5 rounded bg-white/10">{i.invoice_type || "SALES"}</span></td>
+                    <td className="p-4">{displayShopNo ? `${displayShopNo} · ` : ""}{displayShopName}</td>
+                    <td className="p-4 text-right font-mono">{inr(i.total_amount ?? i.grand_total)}</td>
+                    <td className="p-4 text-right font-mono text-amber-300">{inr(i.balance ?? i.total_amount ?? i.grand_total)}</td>
+                    <td className="p-4 text-center"><span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${STATUS[i.status] || STATUS.unpaid}`}>{(i.status || "unpaid").toUpperCase()}</span></td>
+                    <td className="p-4">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {i.status !== "paid" && (
+                          <button data-testid={`pay-invoice-${i.invoice_no}`} onClick={() => setPayFor(i)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-emerald-300" title="Record payment"><Wallet className="h-4 w-4" /></button>
+                        )}
+                        <button data-testid={`view-invoice-${i.invoice_no}`} onClick={() => handleViewInvoice(i)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-cyan-300" title="View Invoice"><Eye className="h-4 w-4" /></button>
+                        
+                        {canManage && (
+                          <>
+                            <button data-testid={`edit-invoice-${i.invoice_no}`} onClick={() => handleOpenEdit(i)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-amber-300" title="Edit Invoice"><Edit className="h-4 w-4" /></button>
+                            <button data-testid={`delete-invoice-${i.invoice_no}`} onClick={() => del(i.id || i._id)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-red-400" title="Delete"><Trash2 className="h-4 w-4" /></button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+              {rows.length === 0 && <tr><td colSpan={8} className="p-8 text-center text-slate-500">No invoices yet. Create your first GST invoice.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -144,18 +297,33 @@ export default function Invoices() {
       {modal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" data-testid="invoice-modal">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setModal(false)} />
-          <form onSubmit={create} className="glass relative z-10 w-full max-w-2xl rounded-2xl p-6 max-h-[90vh] overflow-y-auto">
+          <form onSubmit={saveInvoice} className="glass relative z-10 w-full max-w-2xl rounded-2xl p-6 max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-display text-lg font-semibold">New GST Invoice</h3>
+              <h3 className="font-display text-lg font-semibold">{editId ? "Edit GST Invoice" : "New GST Invoice"}</h3>
               <button type="button" onClick={() => setModal(false)}><X className="h-5 w-5 text-slate-400" /></button>
             </div>
+
+            <div className="mb-4">
+              <label className="text-xs text-slate-500 block mb-1.5">Invoice Type</label>
+              <div className="flex gap-4 p-2 rounded-xl bg-white/5 border border-white/10">
+                <label className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input type="radio" name="invType" value="SALES" checked={invoiceType === "SALES"} onChange={() => setInvoiceType("SALES")} className="text-cyan-500" />
+                  <span>Sales Invoice</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer text-sm">
+                  <input type="radio" name="invType" value="PURCHASE" checked={invoiceType === "PURCHASE"} onChange={() => setInvoiceType("PURCHASE")} className="text-cyan-500" />
+                  <span>Purchase Invoice</span>
+                </label>
+              </div>
+            </div>
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <div className="sm:col-span-1">
                 <label className="text-xs text-slate-500">Wine Shop (Buyer)</label>
                 <select data-testid="invoice-shop-select" value={shopId} onChange={(e) => setShopId(e.target.value)} required
                   className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50">
                   <option value="">Select shop…</option>
-                  {shops.map((s) => <option key={s.id} value={s.id}>{s.shop_no} · {s.name}</option>)}
+                  {shops.map((s) => <option key={s.id || s._id} value={s.id || s._id}>{s.shop_no} · {s.name}</option>)}
                 </select>
               </div>
               <div><label className="text-xs text-slate-500">Invoice Date</label>
@@ -166,7 +334,7 @@ export default function Invoices() {
             <div className="mt-1 space-y-2" data-testid="invoice-items">
               {items.map((it, i) => (
                 <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                  <select data-testid={`item-desc-${i}`} value={BOX_TYPES.includes(it.description) ? it.description : ""} onChange={(e) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, description: e.target.value, rate: String(rateFor(e.target.value)) } : x))}
+                  <select data-testid={`item-desc-${i}`} value={BOX_TYPES.includes(it.description) ? it.description : ""} onChange={(e) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, description: e.target.value, rate: rateFor(e.target.value) } : x))}
                     className="col-span-5 rounded-lg bg-white/5 border border-white/10 py-2 px-2.5 text-xs outline-none focus:border-cyan-500/50">
                     {BOX_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                   </select>
@@ -189,7 +357,7 @@ export default function Invoices() {
               <div className="flex justify-between pt-1.5 border-t border-white/10 font-semibold text-emerald-300"><span>Total (rounded)</span><span className="font-mono" data-testid="invoice-modal-total">{inr(total)}</span></div>
             </div>
             <button data-testid="create-invoice-button" disabled={saving} className="mt-5 w-full rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 py-3 font-semibold text-slate-900 active:scale-95 transition disabled:opacity-60 flex items-center justify-center gap-2">
-              <IndianRupee className="h-4 w-4" /> {saving ? "Creating…" : "Create Invoice"}
+              <IndianRupee className="h-4 w-4" /> {saving ? "Saving…" : (editId ? "Update Invoice" : "Create Invoice")}
             </button>
           </form>
         </div>
@@ -201,7 +369,7 @@ export default function Invoices() {
 }
 
 function PaymentModal({ invoice, onClose, onDone }) {
-  const [amount, setAmount] = useState(String(invoice.balance ?? invoice.grand_total));
+  const [amount, setAmount] = useState(String(invoice.balance ?? invoice.total_amount ?? invoice.grand_total));
   const [mode, setMode] = useState("UPI");
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
   const [saving, setSaving] = useState(false);
@@ -210,7 +378,7 @@ function PaymentModal({ invoice, onClose, onDone }) {
     e.preventDefault();
     setSaving(true);
     try {
-      await api.post("/payments", { shop_id: invoice.shop_id, invoice_id: invoice.id, amount: parseFloat(amount), mode, payment_date: new Date(payDate).toISOString() });
+      await api.post("/payments", { shop_id: invoice.shop_id || invoice.shopId, invoice_id: invoice.id || invoice._id, amount: parseFloat(amount), mode, payment_date: new Date(payDate).toISOString() });
       toast.success("Payment recorded");
       onDone();
     } catch (err) { toast.error("Failed to record payment"); }
@@ -225,16 +393,16 @@ function PaymentModal({ invoice, onClose, onDone }) {
           <h3 className="font-display text-lg font-semibold">Record Payment · {invoice.invoice_no}</h3>
           <button type="button" onClick={onClose}><X className="h-5 w-5 text-slate-400" /></button>
         </div>
-        <p className="text-xs text-slate-500 mb-3">Balance due: <span className="text-amber-300 font-mono">{inr(invoice.balance ?? invoice.grand_total)}</span></p>
+        <p className="text-xs text-slate-500 mb-3">Balance due: <span className="text-amber-300 font-mono">{inr(invoice.balance ?? invoice.total_amount ?? invoice.grand_total)}</span></p>
         <div className="space-y-3">
           <div><label className="text-xs text-slate-500">Amount (₹)</label>
-            <input data-testid="payment-amount-input" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} required className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50" /></div>
+            <input data-testid="payment-amount-input" type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} required className="mt-1 w-full rounded-xl bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50" /></div>
           <div><label className="text-xs text-slate-500">Mode</label>
-            <select data-testid="payment-mode-select" value={mode} onChange={(e) => setMode(e.target.value)} className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50">
+            <select data-testid="payment-mode-select" value={mode} onChange={(e) => setMode(e.target.value)} className="mt-1 w-full rounded-xl bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50">
               {["UPI", "Cash", "Bank Transfer", "Cheque"].map((m) => <option key={m} value={m}>{m}</option>)}
             </select></div>
           <div><label className="text-xs text-slate-500">Date</label>
-            <input data-testid="payment-date-input" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50" /></div>
+            <input data-testid="payment-date-input" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} className="mt-1 w-full rounded-xl bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50" /></div>
         </div>
         <button data-testid="save-payment-button" disabled={saving} className="mt-5 w-full rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 py-3 font-semibold text-slate-900 active:scale-95 transition disabled:opacity-60">
           {saving ? "Saving…" : "Save Payment"}

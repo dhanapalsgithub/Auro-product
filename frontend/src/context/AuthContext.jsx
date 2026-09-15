@@ -1,38 +1,37 @@
-import React, { createContext, useContext, useEffect, useState } from "react";
-import api from "../lib/apiClient";
+import React, { createContext, useContext, useState, useEffect } from "react";
 
 const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null); // null=checking, false=guest, obj=auth
+  const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const token = localStorage.getItem("auro_token");
-    if (!token) {
+    const isAuth = localStorage.getItem("auro_mock_auth");
+    const currentUser = localStorage.getItem("auro_current_user");
+    const userRole = localStorage.getItem("auro_user_role");
+
+    if (isAuth === "true" && currentUser) {
+      setUser({ email: currentUser, role: userRole });
+    } else {
       setUser(false);
-      setLoading(false);
-      return;
     }
-    api
-      .get("/auth/me")
-      .then((res) => setUser(res.data))
-      .catch(() => {
-        localStorage.removeItem("auro_token");
-        setUser(false);
-      })
-      .finally(() => setLoading(false));
+    setLoading(false);
   }, []);
 
   const login = async (email, password) => {
-    const res = await api.post("/auth/login", { email, password });
-    localStorage.setItem("auro_token", res.data.token);
-    setUser(res.data.user);
-    return res.data.user;
+    // Frontend-only mock login
+    localStorage.setItem("auro_mock_auth", "true");
+    localStorage.setItem("auro_current_user", email);
+    localStorage.setItem("auro_user_role", "admin");
+    setUser({ email, role: "admin" });
+    return { email, role: "admin" };
   };
 
   const logout = () => {
-    localStorage.removeItem("auro_token");
+    localStorage.removeItem("auro_mock_auth");
+    localStorage.removeItem("auro_current_user");
+    localStorage.removeItem("auro_user_role");
     setUser(false);
     window.location.href = "/login";
   };

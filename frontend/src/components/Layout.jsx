@@ -65,12 +65,16 @@ export default function Layout() {
 
   const Brand = () => (
     <div className="flex items-center gap-3 px-5 h-16 border-b border-white/10">
-      <img src="/ri-logo.png" alt="Auro" className="h-9 w-9 rounded-lg object-cover bg-white/5" />
-      <div>
-        <p className="font-display text-base font-bold leading-none tracking-tight">Auro Products</p>
-        <p className="text-[10px] uppercase tracking-widest text-slate-500 font-mono mt-1">Billing Suite</p>
-      </div>
-    </div>
+  <img 
+    src="/ri-logo2.png" 
+    alt="Auro" 
+    className="h-16  w-15 rounded-lg object-contain  p-1" 
+  />
+  <div>
+    <p className="font-display text-base font-bold leading-none tracking-tight">Auro Products</p>
+    <p className="text-[10px] uppercase tracking-widest text-slate-500 font-mono mt-1">Billing Suite</p>
+  </div>
+</div>
   );
 
   return (
@@ -132,9 +136,43 @@ export default function Layout() {
               </div>
             </div>
           </header>
-          <main className="flex-1 p-4 md:p-6 lg:p-8"><Outlet /></main>
+          
+          <main className="flex-1 p-4 md:p-6 lg:p-8 space-y-6">
+            {/* Ledger Summary Cards Component Integration */}
+            <LedgerSummarySection />
+
+            {/* Main Content Area */}
+            <Outlet />
+          </main>
         </div>
       </div>
     </div>
   );
+}
+
+// Ledger Summary Cards Section Component
+function LedgerSummarySection() {
+  const [summary, setSummary] = useState({
+    openingBalance: 0,
+    totalRevenue: 0,
+    netProfit: 0,
+    closingBalance: 0,
+  });
+
+  useEffect(() => {
+    api.get("/collections").then((res) => {
+      // Backend /api/collections தரவுகளைப் பயன்படுத்தி சம்மரி கணக்கிடுதல்
+      const data = res.data;
+      const totalRev = data.total_revenue || 0;
+      const totalOut = data.total_outstanding || 0;
+      setSummary({
+        openingBalance: 36000.0, // உதாரண தொடக்க இருப்பு
+        totalRevenue: totalRev,
+        netProfit: totalRev * 0.25, // தோராயமான லாப சதவீதம் அல்லது Backend தரவு
+        closingBalance: totalOut,
+      });
+    }).catch(() => {});
+  }, []);
+
+  
 }

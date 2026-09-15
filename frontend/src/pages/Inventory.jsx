@@ -15,18 +15,26 @@ export default function Inventory() {
   useEffect(() => { api.get("/inventory").then((r) => setData(r.data)); }, []);
 
   const filtered = useMemo(() => {
-    const rows = data?.rows || [];
+    const rows = data?.rows || data?.records || data?.data || [];
     if (!search) return rows;
     const q = search.toLowerCase();
-    return rows.filter((r) => r.shop_no.toLowerCase().includes(q) || r.name.toLowerCase().includes(q) || r.location.toLowerCase().includes(q));
+    return rows.filter((r) => 
+      (r.shop_no && r.shop_no.toLowerCase().includes(q)) || 
+      (r.name && r.name.toLowerCase().includes(q)) || 
+      (r.location && r.location.toLowerCase().includes(q))
+    );
   }, [data, search]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const rows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  const totalBoxes = data?.total_boxes ?? rows.reduce((sum, r) => sum + Number(r.total_boxes || r.boxes || 0), 0);
+  const totalWaste = data?.total_waste ?? data?.waste ?? data?.waste_weight ?? rows.reduce((sum, r) => sum + Number(r.total_waste || r.waste || r.waste_weight || 0), 0);
+  const activeShops = data?.active_shops ?? rows.length;
+
   const doExport = () => exportToCsv("inventory.csv", data?.rows || [], [
     { label: "Shop No", accessor: "shop_no" }, { label: "Name", accessor: "name" }, { label: "Location", accessor: "location" },
-    { label: "Total Boxes", accessor: "total_boxes" }, { label: "Total Waste (kg)", accessor: "total_waste" },
+    { label: "Total Boxes", accessor: "total_boxes" }, { label: "Total Waste (kg)", accessor: (r) => r.total_waste ?? r.waste ?? r.waste_weight ?? 0 },
     { label: "Entries", accessor: "entries" }, { label: "Last Entry", accessor: (r) => fmtDate(r.last_entry) },
   ]);
 
@@ -41,27 +49,31 @@ export default function Inventory() {
       </PageHeader>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-        <Stat icon={Package} label="Total Boxes Supplied" value={(data?.total_boxes ?? 0).toLocaleString("en-IN")} accent="bg-cyan-500/15 text-cyan-300" />
-        <Stat icon={Scale} label="Total Waste (kg)" value={(data?.total_waste ?? 0).toLocaleString("en-IN")} accent="bg-emerald-500/15 text-emerald-300" />
-        <Stat icon={Store} label="Active Shops" value={data?.active_shops ?? 0} accent="bg-amber-500/15 text-amber-300" />
+        <Stat icon={Package} label="Total Boxes Supplied" value={Number(totalBoxes).toLocaleString("en-IN")} accent="bg-cyan-500/15 text-cyan-300" />
+        <Stat icon={Scale} label="Total Waste (kg)" value={Number(totalWaste).toLocaleString("en-IN")} accent="bg-emerald-500/15 text-emerald-300" />
+        <Stat icon={Store} label="Active Shops" value={activeShops} accent="bg-amber-500/15 text-amber-300" />
       </div>
 
       {(data?.by_type || []).length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6" data-testid="inventory-by-type">
-          {data.by_type.map((t) => (
-            <Card key={t.type} className="p-5" data-testid={`type-card-${t.type.replace(/\s/g, "-")}`}>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-xs uppercase tracking-widest text-slate-500 font-mono">{t.type}</p>
-                  <p className="mt-2 font-display text-2xl font-bold">{t.boxes.toLocaleString("en-IN")} <span className="text-sm text-slate-400">pcs</span></p>
+          {data.by_type.map((t) => {
+            const typeWaste = t.waste ?? t.total_waste ?? t.waste_weight ?? 0;
+            const typeBoxes = t.boxes ?? t.total_boxes ?? 0;
+            return (
+              <Card key={t.type} className="p-5" data-testid={`type-card-${t.type.replace(/\s/g, "-")}`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-xs uppercase tracking-widest text-slate-500 font-mono">{t.type}</p>
+                    <p className="mt-2 font-display text-2xl font-bold">{Number(typeBoxes).toLocaleString("en-IN")} <span className="text-sm text-slate-400">pcs</span></p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xs text-slate-500 font-mono">Waste</p>
+                    <p className="mt-1 font-mono font-semibold text-emerald-300">{typeWaste} kg</p>
+                  </div>
                 </div>
-                <div className="text-right">
-                  <p className="text-xs text-slate-500 font-mono">Waste</p>
-                  <p className="mt-1 font-mono font-semibold text-emerald-300">{t.waste} kg</p>
-                </div>
-              </div>
-            </Card>
-          ))}
+              </Card>
+            );
+          })}
         </div>
       )}
 
@@ -82,16 +94,20 @@ export default function Inventory() {
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {rows.map((r) => (
-                <tr key={r.shop_no} data-testid={`inventory-row-${r.shop_no}`} className="hover:bg-white/5 transition-colors">
-                  <td className="p-4"><span className="font-mono text-cyan-300">{r.shop_no}</span><div className="text-xs text-slate-500">{r.name}</div></td>
-                  <td className="p-4 text-slate-400">{r.location}</td>
-                  <td className="p-4 text-right font-mono">{r.total_boxes.toLocaleString("en-IN")}</td>
-                  <td className="p-4 text-right font-mono text-emerald-300">{r.total_waste}</td>
-                  <td className="p-4 text-center">{r.entries}</td>
-                  <td className="p-4 text-slate-400 font-mono">{fmtDate(r.last_entry)}</td>
-                </tr>
-              ))}
+              {rows.map((r) => {
+                const rowWaste = r.total_waste ?? r.waste ?? r.waste_weight ?? 0;
+                const rowBoxes = r.total_boxes ?? r.boxes ?? 0;
+                return (
+                  <tr key={r.shop_no} data-testid={`inventory-row-${r.shop_no}`} className="hover:bg-white/5 transition-colors">
+                    <td className="p-4"><span className="font-mono text-cyan-300">{r.shop_no}</span><div className="text-xs text-slate-500">{r.name}</div></td>
+                    <td className="p-4 text-slate-400">{r.location}</td>
+                    <td className="p-4 text-right font-mono">{Number(rowBoxes).toLocaleString("en-IN")}</td>
+                    <td className="p-4 text-right font-mono text-emerald-300">{rowWaste}</td>
+                    <td className="p-4 text-center">{r.entries ?? 1}</td>
+                    <td className="p-4 text-slate-400 font-mono">{fmtDate(r.last_entry || r.created_at)}</td>
+                  </tr>
+                );
+              })}
               {rows.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-slate-500">No inventory data yet.</td></tr>}
             </tbody>
           </table>

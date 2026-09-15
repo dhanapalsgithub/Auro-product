@@ -6,17 +6,26 @@ import { Scale, Download } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LineChart, Line, Legend } from "recharts";
 
 export default function WasteAnalytics() {
-  const [data, setData] = useState(null);
-  useEffect(() => { api.get("/analytics/waste").then((r) => setData(r.data)); }, []);
+  const [data, setData] = useState({ by_shop: [], by_month: [], by_type_month: [] });
+
+  useEffect(() => { 
+    api.get("/analytics/waste")
+      .then((r) => {
+        if (r?.data) setData(r.data);
+      })
+      .catch((err) => console.error("Failed to load waste analytics:", err)); 
+  }, []);
 
   const byShop = (data?.by_shop || []).slice(0, 10);
   const byMonth = data?.by_month || [];
   const byTypeMonth = data?.by_type_month || [];
-  const totalWaste = (data?.by_shop || []).reduce((s, r) => s + r.waste, 0);
-  const totalBoxes = (data?.by_shop || []).reduce((s, r) => s + r.boxes, 0);
+  const totalWaste = (data?.by_shop || []).reduce((s, r) => s + (Number(r.waste) || 0), 0);
+  const totalBoxes = (data?.by_shop || []).reduce((s, r) => s + (Number(r.boxes) || 0), 0);
 
   const doExport = () => exportToCsv("waste-by-shop.csv", data?.by_shop || [], [
-    { label: "Shop", accessor: "shop" }, { label: "Boxes", accessor: "boxes" }, { label: "Waste (kg)", accessor: "waste" },
+    { label: "Shop", accessor: "shop" }, 
+    { label: "Boxes", accessor: "boxes" }, 
+    { label: "Waste (kg)", accessor: "waste" },
   ]);
 
   return (
@@ -28,8 +37,14 @@ export default function WasteAnalytics() {
       </PageHeader>
 
       <div className="grid grid-cols-2 gap-4 mb-6">
-        <Card className="p-5"><p className="text-xs uppercase tracking-widest text-slate-500 font-mono">Total Boxes</p><p className="font-display text-3xl font-bold mt-2">{totalBoxes.toLocaleString("en-IN")}</p></Card>
-        <Card className="p-5 border-emerald-500/20"><p className="text-xs uppercase tracking-widest text-slate-500 font-mono">Total Waste</p><p className="font-display text-3xl font-bold text-emerald-300 mt-2">{totalWaste.toFixed(2)} kg</p></Card>
+        <Card className="p-5">
+          <p className="text-xs uppercase tracking-widest text-slate-500 font-mono">Total Boxes</p>
+          <p className="font-display text-3xl font-bold mt-2">{totalBoxes.toLocaleString("en-IN")}</p>
+        </Card>
+        <Card className="p-5 border-emerald-500/25">
+          <p className="text-xs uppercase tracking-widest text-slate-500 font-mono">Total Waste</p>
+          <p className="font-display text-3xl font-bold text-emerald-300 mt-2">{totalWaste.toFixed(2)} kg</p>
+        </Card>
       </div>
 
       <Card className="p-5 mb-6">
@@ -47,7 +62,7 @@ export default function WasteAnalytics() {
         </div>
       </Card>
 
-      <Card className="p-5">
+      <Card className="p-5 mb-6">
         <h2 className="font-display text-lg font-semibold mb-4">Monthly Waste Trend</h2>
         <div style={{ width: "100%", height: 280 }} data-testid="waste-month-chart">
           <ResponsiveContainer>
