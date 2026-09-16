@@ -39,16 +39,16 @@ export default function Login() {
         localStorage.setItem("auro_mock_auth", "true");
         localStorage.setItem("auro_current_user", email);
         localStorage.setItem("auro_user_role", matchedUser.role);
-        
+
         // 🔒 Edit, Delete & Opening Balance: Restricted strictly to admin accounts only
         const isAdmin = matchedUser.role === "admin";
         localStorage.setItem("auro_can_edit", isAdmin ? "true" : "false");
         localStorage.setItem("auro_can_manage_balance", isAdmin ? "true" : "false");
-        
+
         // 📄 Creation (Invoices, Box Entries, Payments): Allowed for ALL authenticated users
         localStorage.setItem("auro_can_create", "true");
         localStorage.setItem("auro_can_create_invoice", "true");
-        
+
         // எந்தவித சர்வர் தொல்லையும் இல்லாமல் உடனே டாஷ்போர்டுக்கு மாறும்
         window.location.href = "/dashboard";
       } else {
@@ -61,15 +61,19 @@ export default function Login() {
   return (
     <div className="relative min-h-screen flex flex-col items-center justify-between px-4 py-8 overflow-hidden bg-slate-100 text-slate-800">
       <div className="absolute inset-0 bg-gradient-to-br from-blue-50 via-slate-100 to-emerald-50 pointer-events-none" />
-      
+
       {/* Spacer to push card to center */}
       <div />
 
       <div className="relative z-10 w-full max-w-md my-auto">
         <div className="bg-white/80 backdrop-blur-xl rounded-3xl p-8 sm:p-10 border border-slate-200 shadow-xl shadow-slate-200/50">
           <div className="flex flex-col items-center text-center mb-8">
-            <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-cyan-500 to-emerald-600 flex items-center justify-center mb-4 text-white shadow-lg shadow-cyan-500/20">
-              <Package className="h-8 w-8" />
+            <div className="h-32 w-32 rounded-2xl">
+              <img
+                src="/ri-logo2.png"
+                alt="Auro Products Logo"
+                className="h-full w-full object-cover"
+              />
             </div>
             <h1 className="font-display text-2xl font-bold tracking-tight text-slate-900">Auro Products</h1>
             <p className="text-sm text-slate-500 mt-1">GST Billing & Cotton Box Management</p>

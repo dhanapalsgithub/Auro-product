@@ -14,9 +14,13 @@ export default function LandingPage() {
       {/* Header / Navbar */}
       <header className="w-full max-w-7xl mx-auto px-4 sm:px-6 py-6 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-cyan-600 to-emerald-600 flex items-center justify-center text-white shadow-md shadow-cyan-600/20">
-            <Package className="h-5 w-5" />
-          </div>
+          <div className="h-20 w-20 rounded-xl ">
+  <img 
+    src="/ri-logo2.png" 
+    alt="" 
+    className="h-full w-full object-cover" 
+  />
+</div>
           <span className="font-display text-xl font-bold tracking-tight text-slate-900">Auro Products</span>
         </div>
 

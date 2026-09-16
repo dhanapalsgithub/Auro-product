@@ -1,0 +1,20 @@
+{
+  "short_name": "Auro Billing",
+  "name": "Auro Products Billing App",
+  "icons": [
+    {
+      "src": "ri-logo2.png",
+      "type": "image/png",
+      "sizes": "392x392"
+    },
+    {
+      "src": "ri-logo2.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#000000",
+  "background_color": "#ffffff"
+}
