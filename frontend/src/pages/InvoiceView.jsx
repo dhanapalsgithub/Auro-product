@@ -39,14 +39,34 @@ export default function InvoiceView() {
 
   if (!inv) return <div className="flex h-64 items-center justify-center"><Loader2 className="h-6 w-6 animate-spin text-cyan-400" /></div>;
 
-  const s = inv.seller || {};
-  const upiStr = s.upi_id
-    ? `upi://pay?pa=${encodeURIComponent(s.upi_id)}&pn=${encodeURIComponent(s.name || "Auro Products")}&am=${inv.grand_total || inv.total_amount}&cu=INR&tn=${encodeURIComponent(inv.invoice_no)}`
-    : "";
+  // Ensure seller info fallbacks
+  const s = {
+    name: "Auro Products",
+    gstin: "33AAAAA0000A1Z5",
+    state: "Tamil Nadu",
+    state_code: "33",
+    address: "Industrial Area, Tamil Nadu",
+    ...(inv.seller || {})
+  };
 
   const itemsList = Array.isArray(inv.items) ? inv.items : (inv.line_items || []);
 
-  // Copies required for standard GST billing
+  // Calculate items sum & taxable amount safely
+  const itemTotal = itemsList.reduce((acc, it) => acc + (Number(it.amount) || (Number(it.quantity) * Number(it.rate)) || 0), 0);
+  const taxableVal = Number(inv.taxable_amount ?? inv.taxable ?? itemTotal);
+
+  const cgstRate = Number(inv.cgst_percent ?? 2.5);
+  const sgstRate = Number(inv.sgst_percent ?? 2.5);
+
+  const cgstVal = Number(inv.cgst_amount ?? inv.cgst ?? ((taxableVal * cgstRate) / 100));
+  const sgstVal = Number(inv.sgst_amount ?? inv.sgst ?? ((taxableVal * sgstRate) / 100));
+
+  const totalAmount = Number(inv.grand_total || inv.total_amount || (taxableVal + cgstVal + sgstVal));
+
+  const upiStr = s.upi_id
+    ? `upi://pay?pa=${encodeURIComponent(s.upi_id)}&pn=${encodeURIComponent(s.name || "Auro Products")}&am=${totalAmount}&cu=INR&tn=${encodeURIComponent(inv.invoice_no)}`
+    : "";
+
   const copies = [
     { title: "ORIGINAL FOR RECIPIENT", label: "Original" },
     { title: "DUPLICATE FOR TRANSPORTER", label: "Duplicate" },
@@ -106,7 +126,7 @@ export default function InvoiceView() {
                     </td>
                     <td className="w-1/2 align-top border border-black p-2">
                       <b>Bill To:</b><br />
-                      {inv.shop_no} · {inv.shop_name}<br />
+                      {inv.shop_no ? `${inv.shop_no} · ` : ""}{inv.shop_name || inv.customer_name || "Customer"}<br />
                       {inv.shop_location}<br />
                       TASMAC Wine Shop
                     </td>
@@ -143,19 +163,50 @@ export default function InvoiceView() {
                       <td colSpan={7} className="text-center p-4 text-gray-500">No items found in this invoice</td>
                     </tr>
                   )}
-                  <tr className="font-semibold border-t border-black"><td colSpan={6} className="text-right border-r border-black p-1">Taxable Value</td><td className="text-right p-1">{Number(inv.taxable || inv.total_amount * 0.95 || 0).toFixed(2)}</td></tr>
-                  <tr><td colSpan={6} className="text-right border-r border-black p-1">CGST @ {inv.cgst_percent || 2.5}%</td><td className="text-right p-1">{Number(inv.cgst || 0).toFixed(2)}</td></tr>
-                  <tr><td colSpan={6} className="text-right border-r border-black p-1">SGST @ {inv.sgst_percent || 2.5}%</td><td className="text-right p-1">{Number(inv.sgst || 0).toFixed(2)}</td></tr>
-                  {inv.round_off !== undefined && inv.round_off !== 0 && <tr><td colSpan={6} className="text-right border-r border-black p-1">Round Off</td><td className="text-right p-1">{Number(inv.round_off).toFixed(2)}</td></tr>}
-                  <tr className="font-bold border-t border-black"><td colSpan={6} className="text-right border-r border-black p-1">Total</td><td className="text-right p-1">₹ {Number(inv.grand_total || inv.total_amount || 0).toFixed(2)}</td></tr>
-                  {inv.amount_paid > 0 && <>
-                    <tr><td colSpan={6} className="text-right border-r border-black p-1">Paid</td><td className="text-right p-1">{Number(inv.amount_paid).toFixed(2)}</td></tr>
-                    <tr className="font-semibold"><td colSpan={6} className="text-right border-r border-black p-1">Balance Due</td><td className="text-right p-1">₹ {Number(inv.balance || 0).toFixed(2)}</td></tr>
-                  </>}
+                  <tr className="font-semibold border-t border-black">
+                    <td colSpan={6} className="text-right border-r border-black p-1">Taxable Value</td>
+                    <td className="text-right p-1">{taxableVal.toFixed(2)}</td>
+                  </tr>
+                  <tr>
+                    <td colSpan={6} className="text-right border-r border-black p-1">CGST @ {cgstRate}%</td>
+                    <td className="text-right p-1">{cgstVal.toFixed(2)}</td>
+                  </tr>
+                  <tr>
+                    <td colSpan={6} className="text-right border-r border-black p-1">SGST @ {sgstRate}%</td>
+                    <td className="text-right p-1">{sgstVal.toFixed(2)}</td>
+                  </tr>
+                  {inv.round_off !== undefined && inv.round_off !== 0 && (
+                    <tr>
+                      <td colSpan={6} className="text-right border-r border-black p-1">Round Off</td>
+                      <td className="text-right p-1">{Number(inv.round_off).toFixed(2)}</td>
+                    </tr>
+                  )}
+                  <tr className="font-bold border-t border-black">
+                    <td colSpan={6} className="text-right border-r border-black p-1">Total</td>
+                    <td className="text-right p-1">₹ {totalAmount.toFixed(2)}</td>
+                  </tr>
+                  {inv.amount_paid > 0 && (
+                    <>
+                      <tr>
+                        <td colSpan={6} className="text-right border-r border-black p-1">Paid</td>
+                        <td className="text-right p-1">{Number(inv.amount_paid).toFixed(2)}</td>
+                      </tr>
+                      <tr className="font-semibold">
+                        <td colSpan={6} className="text-right border-r border-black p-1">Balance Due</td>
+                        <td className="text-right p-1">₹ {Number(inv.balance || (totalAmount - inv.amount_paid)).toFixed(2)}</td>
+                      </tr>
+                    </>
+                  )}
                 </tbody>
               </table>
 
-              <table className="w-full text-xs border-collapse border-x border-b border-black"><tbody><tr><td className="p-2"><b>Amount in Words:</b> {numToWords(inv.grand_total || inv.total_amount || 0)}</td></tr></tbody></table>
+              <table className="w-full text-xs border-collapse border-x border-b border-black">
+                <tbody>
+                  <tr>
+                    <td className="p-2"><b>Amount in Words:</b> {numToWords(totalAmount)}</td>
+                  </tr>
+                </tbody>
+              </table>
 
               <table className="w-full text-xs border-collapse border-x border-b border-black">
                 <tbody>
@@ -170,7 +221,7 @@ export default function InvoiceView() {
                       {upiStr ? (
                         <div className="flex flex-col items-center">
                           <QRCodeCanvas value={upiStr} size={96} includeMargin data-testid={`upi-qr-${copy.label}`} />
-                          <span className="text-[10px] mt-1">Scan to pay ₹{Number(inv.grand_total || inv.total_amount || 0).toFixed(2)}</span>
+                          <span className="text-[10px] mt-1">Scan to pay ₹{totalAmount.toFixed(2)}</span>
                         </div>
                       ) : <div className="text-[10px] text-gray-500">Set UPI ID in Settings for a payment QR</div>}
                     </td>

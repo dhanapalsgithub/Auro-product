@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "@/lib/apiClient";
 import { PageHeader, Card } from "@/components/Shell";
-import { Calendar as CalIcon, ChevronLeft, ChevronRight } from "lucide-react";
+import { Calendar as CalIcon, ChevronLeft, ChevronRight, Send } from "lucide-react";
 
 const STATUS = {
   overdue: "bg-red-500/80 text-white",
@@ -11,13 +11,38 @@ const STATUS = {
   upcoming: "bg-emerald-500/70 text-slate-900",
 };
 const LABEL = { overdue: "Overdue", due_today: "Due Today", no_entry: "No Entry", upcoming: "Upcoming" };
+const TARGET_PHONE = "9360380276";
 
 export default function CalendarPage() {
   const [reminders, setReminders] = useState([]);
   const [cursor, setCursor] = useState(new Date());
   const navigate = useNavigate();
 
-  useEffect(() => { api.get("/dashboard").then((r) => setReminders(r.data.reminders || [])); }, []);
+  const sendWhatsAppReminder = (reminderList) => {
+    if (!reminderList || reminderList.length === 0) return;
+    
+    const dueShops = reminderList.filter((r) => r.status === "due_today" || r.status === "overdue");
+    if (dueShops.length === 0) return;
+
+    const messageLines = dueShops.map(
+      (item) => `• Shop: ${item.shop_no} (${item.shop_name || 'N/A'}) - Status: ${item.status.toUpperCase()} - Date: ${item.next_pickup}`
+    );
+
+    const message = encodeURIComponent(
+      `*Auro Product Automatic Pickup Reminder*\n\nAttention! You have pickup tasks pending:\n\n${messageLines.join("\n")}\n\nPlease action these entries immediately.`
+    );
+
+    const whatsappUrl = `https://api.whatsapp.com/send?phone=91${TARGET_PHONE}&text=${message}`;
+    window.open(whatsappUrl, "_blank");
+  };
+
+  useEffect(() => {
+    api.get("/dashboard").then((r) => {
+      const data = r.data.reminders || [];
+      setReminders(data);
+      sendWhatsAppReminder(data);
+    });
+  }, []);
 
   const byDate = useMemo(() => {
     const map = {};
@@ -44,6 +69,12 @@ export default function CalendarPage() {
     <div>
       <PageHeader title="Pickup Calendar" subtitle="Scheduled cotton box pickups by next-due date" icon={CalIcon}>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => sendWhatsAppReminder(reminders)}
+            className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-400 hover:bg-emerald-500/20 mr-2 transition"
+          >
+            <Send className="h-3.5 w-3.5" /> Send WhatsApp Reminder
+          </button>
           <button data-testid="cal-prev" onClick={() => setCursor(new Date(year, month - 1, 1))} className="rounded-lg border border-white/10 bg-white/5 p-2 hover:bg-white/10"><ChevronLeft className="h-4 w-4" /></button>
           <span className="font-medium min-w-[150px] text-center">{monthName}</span>
           <button data-testid="cal-next" onClick={() => setCursor(new Date(year, month + 1, 1))} className="rounded-lg border border-white/10 bg-white/5 p-2 hover:bg-white/10"><ChevronRight className="h-4 w-4" /></button>

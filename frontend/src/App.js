@@ -19,6 +19,7 @@ import Inventory from "@/pages/Inventory";
 import Payments from "@/pages/Payments";
 import Reports from "@/pages/Reports";
 import Collections from "@/pages/Collections";
+import Expenses from "./pages/Expenses";
 
 function App() {
   return (
@@ -43,6 +44,7 @@ function App() {
               <Route path="/invoices/:id" element={<InvoiceView />} />
               <Route path="/inventory" element={<Inventory />} />
               <Route path="/payments" element={<Payments />} />
+              <Route path="/expenses" element={<Expenses />} />
               <Route path="/collections" element={<Collections />} />
               <Route path="/reports" element={<Reports />} />
               <Route path="/waste-analytics" element={<WasteAnalytics />} />

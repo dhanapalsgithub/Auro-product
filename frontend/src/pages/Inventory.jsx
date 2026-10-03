@@ -9,79 +9,220 @@ const PAGE_SIZE = 12;
 
 export default function Inventory() {
   const [data, setData] = useState(null);
+  const [entries, setEntries] = useState([]);
+  const [shops, setShops] = useState([]);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
 
-  useEffect(() => { api.get("/inventory").then((r) => setData(r.data)); }, []);
+  const safeExtractArray = (res) => {
+    if (Array.isArray(res?.data)) return res.data;
+    if (Array.isArray(res?.data?.data)) return res.data.data;
+    if (Array.isArray(res?.data?.rows)) return res.data.rows;
+    if (Array.isArray(res)) return res;
+    return [];
+  };
+
+  useEffect(() => {
+    async function loadData() {
+      setLoading(true);
+      try {
+        const [invRes, entriesRes, shopsRes] = await Promise.allSettled([
+          api.get("/inventory"),
+          api.get("/entries"),
+          api.get("/shops"),
+        ]);
+
+        if (invRes.status === "fulfilled" && invRes.value?.data?.rows?.length > 0) {
+          setData(invRes.value.data);
+        }
+
+        if (entriesRes.status === "fulfilled") {
+          setEntries(safeExtractArray(entriesRes.value));
+        }
+
+        if (shopsRes.status === "fulfilled") {
+          setShops(safeExtractArray(shopsRes.value));
+        }
+      } catch (err) {
+        console.error("Failed to load inventory data:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadData();
+  }, []);
+
+  const computedRows = useMemo(() => {
+    if (data?.rows || data?.records) {
+      return data.rows || data.records || [];
+    }
+
+    const safeEntries = Array.isArray(entries) ? entries : [];
+    const safeShops = Array.isArray(shops) ? shops : [];
+
+    if (!safeEntries.length) return [];
+
+    const shopMap = {};
+    safeShops.forEach((s) => {
+      if (s && s.id) shopMap[s.id] = s;
+    });
+
+    const aggregated = {};
+
+    safeEntries.forEach((entry) => {
+      if (!entry) return;
+      const sId = entry.shop_id;
+      const shop = shopMap[sId] || {};
+      const shopNo = shop.shop_no || entry.shop_no || `Shop #${sId}`;
+      const name = shop.name || entry.shop_name || "Unknown Shop";
+      const location = shop.location || entry.location || "—";
+
+      const brandyQty = Number(entry.brandy_qty || 0);
+      const beerQty = Number(entry.beer_qty || 0);
+      const boxes = brandyQty + beerQty || Number(entry.quantity || entry.boxes || 0);
+      const waste = Number(entry.waste_kg || entry.waste || 0);
+
+      if (!aggregated[sId]) {
+        aggregated[sId] = {
+          shop_id: sId,
+          shop_no: shopNo,
+          name: name,
+          location: location,
+          total_boxes: 0,
+          total_waste: 0,
+          entries: 0,
+          last_entry: entry.entry_date || entry.created_at,
+        };
+      }
+
+      aggregated[sId].total_boxes += boxes;
+      aggregated[sId].total_waste += waste;
+      aggregated[sId].entries += 1;
+
+      if (
+        new Date(entry.entry_date || entry.created_at) >
+        new Date(aggregated[sId].last_entry)
+      ) {
+        aggregated[sId].last_entry = entry.entry_date || entry.created_at;
+      }
+    });
+
+    return Object.values(aggregated);
+  }, [data, entries, shops]);
 
   const filtered = useMemo(() => {
-    const rows = data?.rows || data?.records || data?.data || [];
-    if (!search) return rows;
+    if (!search) return computedRows;
     const q = search.toLowerCase();
-    return rows.filter((r) => 
-      (r.shop_no && r.shop_no.toLowerCase().includes(q)) || 
-      (r.name && r.name.toLowerCase().includes(q)) || 
-      (r.location && r.location.toLowerCase().includes(q))
+    return computedRows.filter(
+      (r) =>
+        (r.shop_no && String(r.shop_no).toLowerCase().includes(q)) ||
+        (r.name && r.name.toLowerCase().includes(q)) ||
+        (r.location && r.location.toLowerCase().includes(q))
     );
-  }, [data, search]);
+  }, [computedRows, search]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const rows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const totalBoxes = data?.total_boxes ?? rows.reduce((sum, r) => sum + Number(r.total_boxes || r.boxes || 0), 0);
-  const totalWaste = data?.total_waste ?? data?.waste ?? data?.waste_weight ?? rows.reduce((sum, r) => sum + Number(r.total_waste || r.waste || r.waste_weight || 0), 0);
-  const activeShops = data?.active_shops ?? rows.length;
+  const totalBoxes = useMemo(() => {
+    if (data?.total_boxes !== undefined) return data.total_boxes;
+    return computedRows.reduce((sum, r) => sum + Number(r.total_boxes || 0), 0);
+  }, [data, computedRows]);
 
-  const doExport = () => exportToCsv("inventory.csv", data?.rows || [], [
-    { label: "Shop No", accessor: "shop_no" }, { label: "Name", accessor: "name" }, { label: "Location", accessor: "location" },
-    { label: "Total Boxes", accessor: "total_boxes" }, { label: "Total Waste (kg)", accessor: (r) => r.total_waste ?? r.waste ?? r.waste_weight ?? 0 },
-    { label: "Entries", accessor: "entries" }, { label: "Last Entry", accessor: (r) => fmtDate(r.last_entry) },
-  ]);
+  const totalWaste = useMemo(() => {
+    if (data?.total_waste !== undefined) return data.total_waste;
+    return computedRows.reduce((sum, r) => sum + Number(r.total_waste || 0), 0);
+  }, [data, computedRows]);
+
+  const activeShops = useMemo(() => {
+    if (data?.active_shops !== undefined) return data.active_shops;
+    return computedRows.length;
+  }, [data, computedRows]);
+
+  const doExport = () =>
+    exportToCsv("inventory.csv", computedRows, [
+      { label: "Shop No", accessor: "shop_no" },
+      { label: "Name", accessor: "name" },
+      { label: "Location", accessor: "location" },
+      { label: "Total Boxes", accessor: "total_boxes" },
+      {
+        label: "Total Waste (kg)",
+        accessor: (r) => Number(r.total_waste || 0).toFixed(2),
+      },
+      { label: "Entries", accessor: "entries" },
+      { label: "Last Entry", accessor: (r) => fmtDate(r.last_entry) },
+    ]);
 
   const Stat = ({ icon: Icon, label, value, accent }) => (
-    <Card className="p-5"><div className="flex items-center justify-between"><div><p className="text-xs uppercase tracking-widest text-slate-500 font-mono">{label}</p><p className="mt-2 font-display text-2xl font-bold">{value}</p></div><div className={`flex h-10 w-10 items-center justify-center rounded-xl ${accent}`}><Icon className="h-5 w-5" /></div></div></Card>
+    <Card className="p-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-widest text-slate-500 font-mono">
+            {label}
+          </p>
+          <p className="mt-2 font-display text-2xl font-bold">{value}</p>
+        </div>
+        <div
+          className={`flex h-10 w-10 items-center justify-center rounded-xl ${accent}`}
+        >
+          <Icon className="h-5 w-5" />
+        </div>
+      </div>
+    </Card>
   );
 
   return (
     <div>
-      <PageHeader title="Inventory Dashboard" subtitle="Cotton boxes supplied & waste generated per shop" icon={Boxes}>
-        <button data-testid="export-inventory-button" onClick={doExport} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 transition"><Download className="h-4 w-4" /> Export</button>
+      <PageHeader
+        title="Inventory Dashboard"
+        subtitle="Cotton boxes supplied & waste generated per shop"
+        icon={Boxes}
+      >
+        <button
+          data-testid="export-inventory-button"
+          onClick={doExport}
+          className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 transition"
+        >
+          <Download className="h-4 w-4" /> Export
+        </button>
       </PageHeader>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-        <Stat icon={Package} label="Total Boxes Supplied" value={Number(totalBoxes).toLocaleString("en-IN")} accent="bg-cyan-500/15 text-cyan-300" />
-        <Stat icon={Scale} label="Total Waste (kg)" value={Number(totalWaste).toLocaleString("en-IN")} accent="bg-emerald-500/15 text-emerald-300" />
-        <Stat icon={Store} label="Active Shops" value={activeShops} accent="bg-amber-500/15 text-amber-300" />
+        <Stat
+          icon={Package}
+          label="Total Boxes Supplied"
+          value={Number(totalBoxes).toLocaleString("en-IN")}
+          accent="bg-cyan-500/15 text-cyan-300"
+        />
+        <Stat
+          icon={Scale}
+          label="Total Waste (kg)"
+          value={`${Number(totalWaste).toFixed(2)} kg`}
+          accent="bg-emerald-500/15 text-emerald-300"
+        />
+        <Stat
+          icon={Store}
+          label="Active Shops"
+          value={activeShops}
+          accent="bg-amber-500/15 text-amber-300"
+        />
       </div>
-
-      {(data?.by_type || []).length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6" data-testid="inventory-by-type">
-          {data.by_type.map((t) => {
-            const typeWaste = t.waste ?? t.total_waste ?? t.waste_weight ?? 0;
-            const typeBoxes = t.boxes ?? t.total_boxes ?? 0;
-            return (
-              <Card key={t.type} className="p-5" data-testid={`type-card-${t.type.replace(/\s/g, "-")}`}>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-xs uppercase tracking-widest text-slate-500 font-mono">{t.type}</p>
-                    <p className="mt-2 font-display text-2xl font-bold">{Number(typeBoxes).toLocaleString("en-IN")} <span className="text-sm text-slate-400">pcs</span></p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-xs text-slate-500 font-mono">Waste</p>
-                    <p className="mt-1 font-mono font-semibold text-emerald-300">{typeWaste} kg</p>
-                  </div>
-                </div>
-              </Card>
-            );
-          })}
-        </div>
-      )}
 
       <Card className="p-4 mb-4">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-          <input data-testid="inventory-search-input" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Search shop…"
-            className="w-full rounded-xl bg-white/5 border border-white/10 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-cyan-500/50" />
+          <input
+            data-testid="inventory-search-input"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+            placeholder="Search shop…"
+            className="w-full rounded-xl bg-white/5 border border-white/10 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-cyan-500/50"
+          />
         </div>
       </Card>
 
@@ -90,29 +231,64 @@ export default function Inventory() {
           <table className="w-full text-sm" data-testid="inventory-table">
             <thead>
               <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wider text-slate-500 font-mono">
-                <th className="p-4">Shop</th><th className="p-4">Location</th><th className="p-4 text-right">Boxes</th><th className="p-4 text-right">Waste (kg)</th><th className="p-4 text-center">Entries</th><th className="p-4">Last Entry</th>
+                <th className="p-4">Shop</th>
+                <th className="p-4">Location</th>
+                <th className="p-4 text-right">Boxes</th>
+                <th className="p-4 text-right">Waste (kg)</th>
+                <th className="p-4 text-center">Entries</th>
+                <th className="p-4">Last Entry</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5">
-              {rows.map((r) => {
-                const rowWaste = r.total_waste ?? r.waste ?? r.waste_weight ?? 0;
-                const rowBoxes = r.total_boxes ?? r.boxes ?? 0;
-                return (
-                  <tr key={r.shop_no} data-testid={`inventory-row-${r.shop_no}`} className="hover:bg-white/5 transition-colors">
-                    <td className="p-4"><span className="font-mono text-cyan-300">{r.shop_no}</span><div className="text-xs text-slate-500">{r.name}</div></td>
-                    <td className="p-4 text-slate-400">{r.location}</td>
-                    <td className="p-4 text-right font-mono">{Number(rowBoxes).toLocaleString("en-IN")}</td>
-                    <td className="p-4 text-right font-mono text-emerald-300">{rowWaste}</td>
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="p-8 text-center text-slate-400">
+                    Loading inventory records...
+                  </td>
+                </tr>
+              ) : rows.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="p-8 text-center text-slate-500">
+                    No inventory data found.
+                  </td>
+                </tr>
+              ) : (
+                rows.map((r) => (
+                  <tr
+                    key={r.shop_id || r.shop_no}
+                    data-testid={`inventory-row-${r.shop_no}`}
+                    className="hover:bg-white/5 transition-colors"
+                  >
+                    <td className="p-4">
+                      <span className="font-mono text-cyan-300">{r.shop_no}</span>
+                      <div className="text-xs text-slate-500">{r.name}</div>
+                    </td>
+                    <td className="p-4 text-slate-400">{r.location || "—"}</td>
+                    <td className="p-4 text-right font-mono">
+                      {Number(r.total_boxes || 0).toLocaleString("en-IN")}
+                    </td>
+                    <td className="p-4 text-right font-mono text-emerald-300">
+                      {Number(r.total_waste || 0).toFixed(2)}
+                    </td>
                     <td className="p-4 text-center">{r.entries ?? 1}</td>
-                    <td className="p-4 text-slate-400 font-mono">{fmtDate(r.last_entry || r.created_at)}</td>
+                    <td className="p-4 text-slate-400 font-mono">
+                      {fmtDate(r.last_entry || r.created_at)}
+                    </td>
                   </tr>
-                );
-              })}
-              {rows.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-slate-500">No inventory data yet.</td></tr>}
+                ))
+              )}
             </tbody>
           </table>
         </div>
-        <div className="px-4"><Pager page={page} pageCount={pageCount} total={filtered.length} onPage={setPage} testid="inventory-pager" /></div>
+        <div className="px-4">
+          <Pager
+            page={page}
+            pageCount={pageCount}
+            total={filtered.length}
+            onPage={setPage}
+            testid="inventory-pager"
+          />
+        </div>
       </Card>
     </div>
   );
