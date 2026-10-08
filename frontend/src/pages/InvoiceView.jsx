@@ -89,8 +89,8 @@ export default function InvoiceView() {
 
       <div className="mx-auto max-w-[820px] space-y-8" id="invoice-print">
         {copies.map((copy, copyIdx) => (
-          <div 
-            key={copyIdx} 
+          <div
+            key={copyIdx}
             className="invoice-sheet rounded-lg p-8 shadow-2xl bg-white text-slate-900 relative overflow-hidden page-break"
             style={{ pageBreakAfter: copyIdx < copies.length - 1 ? "always" : "auto" }}
           >
@@ -122,13 +122,17 @@ export default function InvoiceView() {
                     <td className="w-1/2 align-top border border-black p-2">
                       <b>Invoice No:</b> {inv.invoice_no}<br />
                       <b>Invoice Date:</b> {fmtDate(inv.invoice_date)}<br />
-                      <b>Place of Supply:</b> {inv.shop_district || s.state} ({s.state_code})
+                      <b>Place of Supply:</b> {inv.shop_district || s.state} ({s.state_code})<br />
+                      {inv.truck_no && <><b>Truck No:</b> {inv.truck_no}<br /></>}
+                      {inv.total_weight && <><b>Total Weight:</b> {inv.total_weight} kg</>}
                     </td>
                     <td className="w-1/2 align-top border border-black p-2">
-                      <b>Bill To:</b><br />
-                      {inv.shop_no ? `${inv.shop_no} · ` : ""}{inv.shop_name || inv.customer_name || "Customer"}<br />
-                      {inv.shop_location}<br />
-                      TASMAC Wine Shop
+                      <b>Bill To (Party / Company):</b><br />
+                      <span className="font-bold text-sm">{inv.party_name || inv.customer_name || "Customer"}</span><br />
+                      {inv.location && <><b>Address/Location:</b> {inv.location}<br /></>}
+                      {inv.contact && <><b>Mobile No:</b> {inv.contact}<br /></>}
+                      {inv.supervisor && <><b>Supervisor:</b> {inv.supervisor}<br /></>}
+                      {inv.behalf_wine_shop_name && <><b>On Behalf Of:</b> {inv.behalf_wine_shop_no} - {inv.behalf_wine_shop_name}</>}
                     </td>
                   </tr>
                 </tbody>

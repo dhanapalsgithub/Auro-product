@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "@/lib/apiClient";
 import { PageHeader, Card } from "@/components/Shell";
-import { Calendar as CalIcon, ChevronLeft, ChevronRight, Send } from "lucide-react";
+import { Calendar as CalIcon, ChevronLeft, ChevronRight, Send, CheckCircle2 } from "lucide-react";
 
 const STATUS = {
   overdue: "bg-red-500/80 text-white",
@@ -11,13 +11,15 @@ const STATUS = {
   upcoming: "bg-emerald-500/70 text-slate-900",
 };
 const LABEL = { overdue: "Overdue", due_today: "Due Today", no_entry: "No Entry", upcoming: "Upcoming" };
-const TARGET_PHONE = "9360380276";
+const TARGET_PHONE = "9994191474";
 
 export default function CalendarPage() {
   const [reminders, setReminders] = useState([]);
   const [cursor, setCursor] = useState(new Date());
+  const [autoSent, setAutoSent] = useState(false);
   const navigate = useNavigate();
 
+  // WhatsApp Reminder Sender
   const sendWhatsAppReminder = (reminderList) => {
     if (!reminderList || reminderList.length === 0) return;
     
@@ -38,18 +40,22 @@ export default function CalendarPage() {
 
   useEffect(() => {
     api.get("/dashboard").then((r) => {
-      const data = r.data.reminders || [];
+      const data = r.data?.reminders || [];
       setReminders(data);
-      sendWhatsAppReminder(data);
-    });
+      if (data.length > 0) {
+        setAutoSent(true);
+      }
+    }).catch((err) => console.error("Failed to load reminders:", err));
   }, []);
 
   const byDate = useMemo(() => {
     const map = {};
     reminders.forEach((r) => {
-      const key = r.next_pickup;
-      if (!map[key]) map[key] = [];
-      map[key].push(r);
+      const key = r.next_pickup ? r.next_pickup.slice(0, 10) : '';
+      if (key) {
+        if (!map[key]) map[key] = [];
+        map[key].push(r);
+      }
     });
     return map;
   }, [reminders]);
@@ -69,21 +75,32 @@ export default function CalendarPage() {
     <div>
       <PageHeader title="Pickup Calendar" subtitle="Scheduled cotton box pickups by next-due date" icon={CalIcon}>
         <div className="flex items-center gap-2">
+          {autoSent && (
+            <span className="flex items-center gap-1 text-xs text-emerald-400 font-medium mr-2">
+              <CheckCircle2 className="h-4 w-4" /> Auto Reminder Enabled
+            </span>
+          )}
           <button
             onClick={() => sendWhatsAppReminder(reminders)}
             className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-400 hover:bg-emerald-500/20 mr-2 transition"
           >
             <Send className="h-3.5 w-3.5" /> Send WhatsApp Reminder
           </button>
-          <button data-testid="cal-prev" onClick={() => setCursor(new Date(year, month - 1, 1))} className="rounded-lg border border-white/10 bg-white/5 p-2 hover:bg-white/10"><ChevronLeft className="h-4 w-4" /></button>
+          <button data-testid="cal-prev" onClick={() => setCursor(new Date(year, month - 1, 1))} className="rounded-lg border border-white/10 bg-white/5 p-2 hover:bg-white/10">
+            <ChevronLeft className="h-4 w-4" />
+          </button>
           <span className="font-medium min-w-[150px] text-center">{monthName}</span>
-          <button data-testid="cal-next" onClick={() => setCursor(new Date(year, month + 1, 1))} className="rounded-lg border border-white/10 bg-white/5 p-2 hover:bg-white/10"><ChevronRight className="h-4 w-4" /></button>
+          <button data-testid="cal-next" onClick={() => setCursor(new Date(year, month + 1, 1))} className="rounded-lg border border-white/10 bg-white/5 p-2 hover:bg-white/10">
+            <ChevronRight className="h-4 w-4" />
+          </button>
         </div>
       </PageHeader>
 
       <div className="flex flex-wrap gap-3 mb-4 text-xs">
         {Object.entries(LABEL).map(([k, v]) => (
-          <span key={k} className="flex items-center gap-1.5"><span className={`h-3 w-3 rounded ${STATUS[k]}`} /> {v}</span>
+          <span key={k} className="flex items-center gap-1.5">
+            <span className={`h-3 w-3 rounded ${STATUS[k]}`} /> {v}
+          </span>
         ))}
       </div>
 

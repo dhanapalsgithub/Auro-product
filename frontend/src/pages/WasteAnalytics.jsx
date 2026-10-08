@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from "react";
-import api from "@/lib/apiClient";
-import { PageHeader, Card } from "@/components/Shell";
+import api from "../lib/apiClient";
 import { Scale } from "lucide-react";
 
 export default function WasteAnalytics() {
@@ -16,42 +15,73 @@ export default function WasteAnalytics() {
   const totalBoxes = (data?.by_shop || []).reduce((s, r) => s + (Number(r.boxes) || 0), 0);
 
   return (
-    <div>
-      <PageHeader title="Waste Analytics" subtitle="Cotton box waste generated across shops" icon={Scale} />
-      
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        <Card className="p-5">
-          <p className="text-xs text-slate-500 font-mono">TOTAL BOXES</p>
-          <p className="text-2xl font-bold mt-1">{totalBoxes.toLocaleString("en-IN")}</p>
-        </Card>
-        <Card className="p-5">
-          <p className="text-xs text-slate-500 font-mono">TOTAL WASTE</p>
-          <p className="text-2xl font-bold text-emerald-300 mt-1">{totalWaste.toFixed(2)} kg</p>
-        </Card>
+    <div className="p-6 min-h-screen bg-slate-50 text-slate-800">
+      <div className="flex items-center gap-3 mb-6">
+        <div className="p-2.5 rounded-2xl bg-cyan-100 text-cyan-700">
+          <Scale className="h-6 w-6" />
+        </div>
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">
+            Waste Analytics
+          </h1>
+          <p className="text-sm text-slate-500 mt-0.5">
+            Cotton box waste generated across shops
+          </p>
+        </div>
       </div>
 
-      <Card className="overflow-hidden">
-        <div className="p-4 border-b border-white/10 font-semibold text-sm">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+        <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm">
+          <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">
+            Total Boxes
+          </p>
+          <p className="text-2xl font-bold text-slate-900 mt-2">
+            {totalBoxes.toLocaleString("en-IN")}
+          </p>
+        </div>
+
+        <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm">
+          <p className="text-xs text-slate-400 font-semibold uppercase tracking-wider">
+            Total Waste
+          </p>
+          <p className="text-2xl font-bold text-emerald-600 mt-2">
+            {totalWaste.toFixed(2)} kg
+          </p>
+        </div>
+      </div>
+
+      <div className="rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden">
+        <div className="p-4 border-b border-slate-200 font-semibold text-sm text-slate-800 bg-slate-50">
           Waste Breakdown by Shop
         </div>
-        <div className="divide-y divide-white/5 max-h-[400px] overflow-y-auto">
+
+        <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto">
           {(!data?.by_shop || data.by_shop.length === 0) ? (
-            <div className="p-4 text-center text-xs text-slate-500">No waste data recorded.</div>
+            <div className="p-6 text-center text-xs text-slate-400">
+              No waste data recorded.
+            </div>
           ) : (
             data.by_shop.map((shop) => (
-              <div key={shop.shop_id} className="flex items-center justify-between p-4 hover:bg-white/5 text-xs">
+              <div
+                key={shop.shop_id}
+                className="flex items-center justify-between p-4 hover:bg-slate-50 text-sm transition"
+              >
                 <div>
-                  <p className="font-medium text-white">{shop.shop_no} · {shop.shop_name}</p>
-                  <p className="text-slate-500">{shop.boxes} boxes collected</p>
+                  <p className="font-semibold text-slate-800">
+                    {shop.shop_no} · {shop.shop_name}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {shop.boxes} boxes collected
+                  </p>
                 </div>
-                <div className="text-right font-mono text-emerald-300 font-semibold">
+                <div className="text-right font-semibold text-emerald-600">
                   {Number(shop.waste || 0).toFixed(2)} kg
                 </div>
               </div>
             ))
           )}
         </div>
-      </Card>
+      </div>
     </div>
   );
 }

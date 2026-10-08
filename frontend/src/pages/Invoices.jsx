@@ -5,7 +5,7 @@ import { PageHeader, Card } from "@/components/Shell";
 import Pager from "@/components/Pager";
 import { inr, fmtDate, exportToCsv } from "@/lib/helpers";
 import { toast } from "sonner";
-import { Receipt, Plus, Download, Search, Eye, Edit, Trash2, X, IndianRupee, Wallet } from "lucide-react";
+import { Receipt, Plus, Download, Search, Eye, Edit, Trash2, X, Wallet, Building2, Phone, MapPin, User, IndianRupee } from "lucide-react";
 import { BOX_TYPES } from "@/lib/boxTypes";
 
 const PAGE_SIZE = 10;
@@ -27,7 +27,9 @@ export default function Invoices() {
   const navigate = useNavigate();
   const [invoices, setInvoices] = useState([]);
   const [shops, setShops] = useState([]);
+  const [companies, setCompanies] = useState([]);
   const [settings, setSettings] = useState(null);
+  const [activeTab, setActiveTab] = useState("invoices");
 
   const [canManage] = useState(localStorage.getItem("auro_can_edit") === "true");
 
@@ -37,8 +39,8 @@ export default function Invoices() {
   const [page, setPage] = useState(1);
   const [modal, setModal] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [payFor, setPayFor] = useState(null);
   const [editId, setEditId] = useState(null);
+
   const [location, setLocation] = useState("");
   const [supervisor, setSupervisor] = useState("");
   const [contact, setContact] = useState("");
@@ -76,6 +78,10 @@ export default function Invoices() {
         setPage(1); 
       })
       .catch(() => setInvoices([]));
+
+    api.get("/companies")
+      .then((r) => setCompanies(safeExtractArray(r)))
+      .catch(() => setCompanies([]));
   };
 
   useEffect(() => { load(); }, [search, fromMonth, toMonth]);
@@ -99,6 +105,35 @@ export default function Invoices() {
   const safeInvoices = Array.isArray(invoices) ? invoices : [];
   const pageCount = Math.max(1, Math.ceil(safeInvoices.length / PAGE_SIZE));
   const rows = useMemo(() => safeInvoices.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [safeInvoices, page]);
+
+  // Derived Company Directory Fallback
+  const companyList = useMemo(() => {
+    if (companies.length > 0) return companies;
+    
+    const map = new Map();
+    safeInvoices.forEach((inv) => {
+      const name = (inv.party_name || inv.customer_name || "").trim();
+      if (name && !map.has(name)) {
+        map.set(name, {
+          name: name,
+          shop_no: inv.behalf_wine_shop_no || inv.shop_no || "-",
+          location: inv.location || "-",
+          contact: inv.contact || "-",
+          supervisor: inv.supervisor || "-"
+        });
+      }
+    });
+    return Array.from(map.values());
+  }, [companies, safeInvoices]);
+
+  const summary = useMemo(() => {
+    const totalSales = safeInvoices.reduce((acc, i) => acc + (Number(i.total_amount) || 0), 0);
+    const totalPaid = safeInvoices.reduce((acc, i) => acc + (Number(i.amount_paid) || 0), 0);
+    const totalBalance = totalSales - totalPaid;
+    const uniqueCompanies = companyList.length;
+
+    return { totalSales, totalPaid, totalBalance, uniqueCompanies };
+  }, [safeInvoices, companyList]);
 
   const taxable = items.reduce((s, it) => s + (Number(it.quantity || 0) * Number(it.rate || 0)), 0);
   const cgp = settings?.cgst_percent || 2.5, sgp = settings?.sgst_percent || 2.5;
@@ -182,7 +217,7 @@ export default function Invoices() {
   const saveInvoice = async (e) => {
     e.preventDefault();
     if (!canManage && editId) { toast.error("Unauthorized: Only admins can edit invoices"); return; }
-    if (!partyName) { toast.error("Enter Party Name"); return; }
+    if (!partyName) { toast.error("Enter Party / Company Name"); return; }
 
     const clean = items.filter((it) => it.quantity !== "" && it.rate !== "").map((it) => ({
       ...it,
@@ -254,36 +289,10 @@ export default function Invoices() {
     }
   };
 
-  const del = async (id) => {
-    if (!canManage) { toast.error("Unauthorized: Only admins can delete invoices"); return; }
-    if (!window.confirm("Delete invoice?")) return;
-    try {
-      await api.delete(`/invoices/${id}`);
-      toast.success("Deleted");
-      load();
-    } catch {
-      toast.error("Failed to delete invoice");
-    }
-  };
-
-  const doExport = () => exportToCsv("sale_invoices.csv", safeInvoices, [
-    { label: "Invoice No", accessor: "invoice_no" },
-    { label: "Date", accessor: (r) => fmtDate(r.invoice_date) },
-    { label: "Party Name", accessor: (r) => r.party_name || r.shop_name },
-    { label: "On Behalf Of Shop", accessor: (r) => r.behalf_wine_shop_name ? `${r.behalf_wine_shop_no} - ${r.behalf_wine_shop_name}` : "" },
-    { label: "Truck No", accessor: "truck_no" },
-    { label: "Total Weight (kg)", accessor: "total_weight" },
-    { label: "Taxable", accessor: "taxable" },
-    { label: "Total", accessor: (r) => r.total_amount ?? r.grand_total },
-    { label: "Paid", accessor: "amount_paid" },
-    { label: "Closing Balance", accessor: (r) => r.balance ?? r.total_amount ?? r.grand_total },
-    { label: "Status", accessor: "status" },
-  ]);
-
   return (
     <div>
-      <PageHeader title="Sale Invoices" subtitle="Tamil Nadu Tax Sale Invoices · 5% GST (CGST 2.5% + SGST 2.5%)" icon={Receipt}>
-        <button onClick={doExport} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 transition">
+      <PageHeader title="Sale Invoices" subtitle="Tamil Nadu Tax Sale Invoices · GST Sales Summary & Company Management" icon={Receipt}>
+        <button onClick={() => exportToCsv("sale_invoices.csv", safeInvoices)} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 transition">
           <Download className="h-4 w-4" /> Export
         </button>
         <button onClick={handleOpenCreate} className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 px-4 py-2 text-sm font-semibold text-slate-900 active:scale-95 transition">
@@ -291,232 +300,275 @@ export default function Invoices() {
         </button>
       </PageHeader>
 
-      <Card className="p-4 mb-4 flex flex-col md:flex-row gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search invoice no / party name / wine shop / truck…"
-            className="w-full rounded-xl bg-white/5 border border-white/10 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-cyan-500/50" />
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-400 font-mono">From Month:</span>
-          <input type="month" value={fromMonth} onChange={(e) => setFromMonth(e.target.value)} className="rounded-xl bg-white/5 border border-white/10 py-2 px-3 text-sm outline-none focus:border-cyan-500/50" />
-          <span className="text-xs text-slate-400 font-mono">To Month:</span>
-          <input type="month" value={toMonth} onChange={(e) => setToMonth(e.target.value)} className="rounded-xl bg-white/5 border border-white/10 py-2 px-3 text-sm outline-none focus:border-cyan-500/50" />
-        </div>
-      </Card>
+      {/* TOP SUMMARY CARDS */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 bg-white">
+        <Card className="p-4 flex items-center gap-4 bg-gradient-to-br from-cyan-500/10 to-blue-500/5 border-cyan-500/20">
+          <div className="p-3 rounded-xl bg-cyan-500/20 text-cyan-400">
+            <Building2 className="h-6 w-6" />
+          </div>
+          <div>
+            <p className="text-xs text-slate-400 uppercase font-mono">Total Companies</p>
+            <p className="text-xl font-bold font-mono text-cyan-300">{summary.uniqueCompanies}</p>
+          </div>
+        </Card>
 
-      <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wider text-slate-500 font-mono">
-                <th className="p-4">Invoice</th>
-                <th className="p-4">Date</th>
-                <th className="p-4">Party Name</th>
-                <th className="p-4 text-right">Total Amount</th>
-                <th className="p-4 text-right">Closing Balance</th>
-                <th className="p-4 text-center">Status</th>
-                <th className="p-4 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-white/5">
-              {rows.map((i) => (
-                <tr key={i.id || i._id} className="hover:bg-white/5 transition-colors">
-                  <td className="p-4 font-mono text-cyan-300 cursor-pointer" onClick={() => handleViewInvoice(i)}>{i.invoice_no}</td>
-                  <td className="p-4 text-slate-400 font-mono">{fmtDate(i.invoice_date)}</td>
-                  <td className="p-4 font-semibold text-slate-200">{i.party_name || i.shop_name}</td>
-                  <td className="p-4 text-right font-mono">{inr(i.total_amount ?? i.grand_total)}</td>
-                  <td className="p-4 text-right font-mono text-amber-300">{inr(i.balance ?? i.total_amount ?? i.grand_total)}</td>
-                  <td className="p-4 text-center"><span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${STATUS[i.status] || STATUS.unpaid}`}>{(i.status || "unpaid").toUpperCase()}</span></td>
-                  <td className="p-4">
-                    <div className="flex items-center justify-end gap-1.5">
-                      {i.status !== "paid" && (
-                        <button onClick={() => setPayFor(i)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-emerald-300" title="Record payment"><Wallet className="h-4 w-4" /></button>
-                      )}
-                      <button onClick={() => handleViewInvoice(i)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-cyan-300" title="View Invoice"><Eye className="h-4 w-4" /></button>
-                      {canManage && (
-                        <>
-                          <button onClick={() => handleOpenEdit(i)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-amber-300" title="Edit Invoice"><Edit className="h-4 w-4" /></button>
-                          <button onClick={() => del(i.id || i._id)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-red-400" title="Delete"><Trash2 className="h-4 w-4" /></button>
-                        </>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {rows.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-slate-500">No sale invoices found.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-        <div className="px-4"><Pager page={page} pageCount={pageCount} total={safeInvoices.length} onPage={setPage} /></div>
-      </Card>
+        <Card className="p-4 flex items-center gap-4 bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border-emerald-500/20">
+          <div className="p-3 rounded-xl bg-emerald-500/20 text-emerald-400">
+            <IndianRupee className="h-6 w-6" />
+          </div>
+          <div>
+            <p className="text-xs text-slate-400 uppercase font-mono">Total Sales</p>
+            <p className="text-xl font-bold font-mono text-emerald-300">{inr(summary.totalSales)}</p>
+          </div>
+        </Card>
 
-      {modal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-white/80 backdrop-blur-sm" onClick={() => setModal(false)} />
-          <form onSubmit={saveInvoice} className="glass relative z-10 w-full max-w-2xl rounded-2xl p-6 max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-display text-lg font-semibold">{editId ? "Edit Sale Invoice" : "New Sale Invoice"}</h3>
-              <button type="button" onClick={() => setModal(false)}><X className="h-5 w-5 text-slate-400" /></button>
+        <Card className="p-4 flex items-center gap-4 bg-gradient-to-br from-amber-500/10 to-orange-500/5 border-amber-500/20">
+          <div className="p-3 rounded-xl bg-amber-500/20 text-amber-400">
+            <Wallet className="h-6 w-6" />
+          </div>
+          <div>
+            <p className="text-xs text-slate-400 uppercase font-mono">Total Paid</p>
+            <p className="text-xl font-bold font-mono text-amber-300">{inr(summary.totalPaid)}</p>
+          </div>
+        </Card>
+
+        <Card className="p-4 flex items-center gap-4 bg-gradient-to-br from-red-500/10 to-rose-500/5 border-red-500/20">
+          <div className="p-3 rounded-xl bg-red-500/20 text-red-400">
+            <Receipt className="h-6 w-6" />
+          </div>
+          <div>
+            <p className="text-xs text-slate-400 uppercase font-mono">Total Outstanding</p>
+            <p className="text-xl font-bold font-mono text-red-300">{inr(summary.totalBalance)}</p>
+          </div>
+        </Card>
+      </div>
+
+      {/* VIEW TABS */}
+      <div className="flex items-center gap-3 mb-4">
+        <button 
+          onClick={() => setActiveTab("invoices")} 
+          className={`px-4 py-2 rounded-xl text-sm font-medium transition ${activeTab === "invoices" ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}
+        >
+          All Sale Invoices ({safeInvoices.length})
+        </button>
+        <button 
+          onClick={() => setActiveTab("companies")} 
+          className={`px-4 py-2 rounded-xl text-sm font-medium transition ${activeTab === "companies" ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}
+        >
+          Company Directory ({companyList.length})
+        </button>
+      </div>
+
+      {activeTab === "invoices" ? (
+        <>
+          <Card className="p-4 mb-4 flex flex-col md:flex-row gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search invoice no / party name / wine shop / truck…"
+                className="w-full rounded-xl bg-white/5 border border-white/10 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-cyan-500/50" />
             </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400 font-mono">From:</span>
+              <input type="month" value={fromMonth} onChange={(e) => setFromMonth(e.target.value)} className="rounded-xl bg-white/5 border border-white/10 py-2 px-3 text-sm outline-none focus:border-cyan-500/50" />
+              <span className="text-xs text-slate-400 font-mono">To:</span>
+              <input type="month" value={toMonth} onChange={(e) => setToMonth(e.target.value)} className="rounded-xl bg-white/5 border border-white/10 py-2 px-3 text-sm outline-none focus:border-cyan-500/50" />
+            </div>
+          </Card>
 
-            {/* Select Existing Shop / Customer Option */}
-            {safeShops.length > 0 && (
-              <div className="mb-3">
-                <label className="text-xs text-slate-500">Select Existing Shop / Customer (Optional)</label>
-                <select
-                  value={shopId}
-                  onChange={(e) => handleSelectShop(e.target.value)}
-                  className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50"
-                >
-                  <option value="" className="bg-slate-900 text-slate-200">-- Choose Shop or Customer --</option>
-                  {safeShops.map((s) => (
-                    <option key={s.id || s._id} value={s.id || s._id} className="bg-slate-900 text-slate-200">
-                      {s.shop_no ? `${s.shop_no} - ` : ""}{s.name}
-                    </option>
+          <Card className="overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wider text-slate-500 font-mono">
+                    <th className="p-4">Invoice</th>
+                    <th className="p-4">Date</th>
+                    <th className="p-4">Party / Company Name</th>
+                    <th className="p-4">Mobile & Address</th>
+                    <th className="p-4 text-right">Total Amount</th>
+                    <th className="p-4 text-center">Status</th>
+                    <th className="p-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-white/5">
+                  {rows.map((i) => (
+                    <tr key={i.id || i._id} className="hover:bg-white/5 transition-colors">
+                      <td className="p-4 font-mono text-cyan-300 cursor-pointer" onClick={() => handleViewInvoice(i)}>{i.invoice_no}</td>
+                      <td className="p-4 text-slate-400 font-mono">{fmtDate(i.invoice_date)}</td>
+                      <td className="p-4 bold text-black-200">
+                        {i.party_name || i.customer_name || i.shop_name}
+                        {i.supervisor && <span className="block text-xs font-normal text-slate-400">Supervisor: {i.supervisor}</span>}
+                      </td>
+                      <td className="p-4 text-xs text-slate-300">
+                        {i.contact && <div className="flex items-center gap-1"><Phone className="h-3 w-3 text-cyan-400" />{i.contact}</div>}
+                        {i.location && <div className="flex items-center gap-1 text-slate-400"><MapPin className="h-3 w-3 text-emerald-400" />{i.location}</div>}
+                        {!i.contact && !i.location && <span className="text-slate-500">-</span>}
+                      </td>
+                      <td className="p-4 text-right font-mono">{inr(i.total_amount ?? i.grand_total)}</td>
+                      <td className="p-4 text-center"><span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${STATUS[i.status] || STATUS.unpaid}`}>{(i.status || "unpaid").toUpperCase()}</span></td>
+                      <td className="p-4">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button onClick={() => handleViewInvoice(i)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-cyan-300" title="View Invoice"><Eye className="h-4 w-4" /></button>
+                          {canManage && (
+                            <button onClick={() => handleOpenEdit(i)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-amber-300" title="Edit Invoice"><Edit className="h-4 w-4" /></button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
                   ))}
-                </select>
-              </div>
-            )}
-
-            {/* Invoice & Company Basic Information */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-              <div>
-                <label className="text-xs text-slate-500">Invoice No.</label>
-                <input type="text" required placeholder="INV-20261002-1234" value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)}
-                  className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50 font-mono text-cyan-300" />
-              </div>
-              <div>
-                <label className="text-xs text-slate-500">Party / Company Name</label>
-                <input type="text" required placeholder="Enter Company / Party Name" value={partyName} onChange={(e) => setPartyName(e.target.value)}
-                  className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50" />
-              </div>
+                  {rows.length === 0 && <tr><td colSpan={7} className="p-8 text-center text-slate-500">No sale invoices found.</td></tr>}
+                </tbody>
+              </table>
             </div>
-
-            {/* Location, Supervisor & Mobile No */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
-              <div>
-                <label className="text-xs text-slate-500">Location / Address</label>
-                <input type="text" placeholder="Location Name" value={location} onChange={(e) => setLocation(e.target.value)}
-                  className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50" />
-              </div>
-              <div>
-                <label className="text-xs text-slate-500">Supervisor / Contact Person</label>
-                <input type="text" placeholder="Supervisor Name" value={supervisor} onChange={(e) => setSupervisor(e.target.value)}
-                  className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50" />
-              </div>
-              <div>
-                <label className="text-xs text-slate-500">Mobile No.</label>
-                <input type="tel" placeholder="9876543210" value={contact} onChange={(e) => setContact(e.target.value)}
-                  className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50" />
-              </div>
-            </div>
-
-            {/* Logistics & Date */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
-              <div>
-                <label className="text-xs text-slate-500">Invoice Date</label>
-                <input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50" />
-              </div>
-              <div>
-                <label className="text-xs text-slate-500">Truck No.</label>
-                <input type="text" placeholder="TN 01 AB 1234" value={truckNo} onChange={(e) => setTruckNo(e.target.value)} className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50" />
-              </div>
-              <div>
-                <label className="text-xs text-slate-500">Total Weight (kg)</label>
-                <input type="number" step="0.01" min="0" placeholder="1500" value={totalWeight} onChange={(e) => setTotalWeight(e.target.value)} className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50" />
-              </div>
-            </div>
-
-            {/* Line Items */}
-            <label className="text-xs text-slate-500">Line Items</label>
-            <div className="mt-1 space-y-2">
-              {items.map((it, i) => (
-                <div key={i} className="grid grid-cols-12 gap-2 items-center">
-                  <select value={BOX_TYPES.includes(it.description) ? it.description : ""} onChange={(e) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, description: e.target.value, rate: rateFor(e.target.value) } : x))}
-                    className="col-span-4 rounded-lg bg-white/5 border border-white/10 py-2 px-2.5 text-xs outline-none focus:border-cyan-500/50">
-                    {BOX_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                  </select>
-                  <input value={it.hsn} onChange={(e) => setItem(i, "hsn", e.target.value)} placeholder="HSN"
-                    className="col-span-2 rounded-lg bg-white/5 border border-white/10 py-2 px-2.5 text-xs outline-none focus:border-cyan-500/50" />
-                  <input type="number" min="0" value={it.quantity} onChange={(e) => setItem(i, "quantity", e.target.value)} placeholder="Qty"
-                    className="col-span-2 rounded-lg bg-white/5 border border-white/10 py-2 px-2.5 text-xs outline-none focus:border-cyan-500/50" />
-                  <input type="number" step="0.01" min="0" value={it.rate} onChange={(e) => setItem(i, "rate", e.target.value)} placeholder="Rate"
-                    className="col-span-2 rounded-lg bg-white/5 border border-white/10 py-2 px-2.5 text-xs outline-none focus:border-cyan-500/50" />
-                  <div className="col-span-2 flex items-center justify-end gap-1">
-                    <span className="text-xs font-mono text-cyan-300">{inr(Number(it.quantity || 0) * Number(it.rate || 0))}</span>
-                    <button type="button" onClick={() => removeItem(i)} className="text-slate-500 hover:text-red-400 ml-1"><X className="h-4 w-4" /></button>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <button type="button" onClick={addItem} className="mt-2 flex items-center gap-1.5 text-xs text-cyan-300 hover:underline"><Plus className="h-3.5 w-3.5" /> Add line item</button>
-
-            {/* Totals Section */}
-            <div className="mt-4 rounded-xl bg-white/5 border border-white/10 p-4 text-sm space-y-1.5">
-              <div className="flex justify-between text-slate-400"><span>Taxable Total</span><span className="font-mono">{inr(taxable)}</span></div>
-              <div className="flex justify-between text-slate-400"><span>CGST {cgp}% + SGST {sgp}%</span><span className="font-mono">{inr(cgst + sgst)}</span></div>
-              <div className="flex justify-between pt-1.5 border-t border-white/10 font-semibold text-emerald-300"><span>Invoice Total Amount</span><span className="font-mono">{inr(total)}</span></div>
-            </div>
-
-            <button disabled={saving} className="mt-5 w-full rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 py-3 font-semibold text-slate-900 active:scale-95 transition disabled:opacity-60 flex items-center justify-center gap-2">
-              <IndianRupee className="h-4 w-4" /> {saving ? "Saving…" : (editId ? "Update Sale Invoice" : "Create Sale Invoice")}
-            </button>
-          </form>
-        </div>
+            <div className="px-4"><Pager page={page} pageCount={pageCount} total={safeInvoices.length} onPage={setPage} /></div>
+          </Card>
+        </>
+      ) : (
+        /* COMPANY DIRECTORY LIST */
+        <Card className="overflow-hidden">
+          <div className="p-4 border-b border-white/10 font-bold text-black-200">Company Details Directory</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wider text-slate-500 font-mono">
+                  <th className="p-4">Company Name</th>
+                  {/* <th className="p-4">Shop / Code</th>  */}
+                  <th className="p-4">Location / Address</th>
+                  <th className="p-4">Contact / Mobile</th>
+                  <th className="p-4">Supervisor</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5">
+                {companyList.map((c, idx) => (
+                  <tr key={idx} className="hover:bg-white/5 transition-colors">
+                    <td className="p-4 font-semibold text-amber-300">{c.name}</td>
+                    {/* <td className="p-4 font-mono text-slate-400">{c.shop_no}</td> */}
+                    <td className="p-4 text-slate-300">{c.location}</td>
+                    <td className="p-4 font-mono text-emerald-400">{c.contact}</td>
+                    <td className="p-4 text-slate-400">{c.supervisor}</td>
+                  </tr>
+                ))}
+                {companyList.length === 0 && <tr><td colSpan={5} className="p-8 text-center text-black-500">No companies recorded.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       )}
 
-      {payFor && <PaymentModal invoice={payFor} onClose={() => setPayFor(null)} onDone={() => { setPayFor(null); load(); }} />}
+      {/* SALE INVOICE CREATE / EDIT MODAL */}
+      {modal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 ">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setModal(false)} />
+         <form onSubmit={saveInvoice} className="glass relative z-10 w-full max-w-2xl rounded-2xl p-6 max-h-[90vh] overflow-y-auto text-slate-800 bg-white shadow-xl border border-slate-200">
+  <div className="flex items-center justify-between mb-4">
+    <h3 className="font-display text-lg font-semibold text-slate-900">{editId ? "Edit Sale Invoice" : "New Sale Invoice"}</h3>
+    <button type="button" onClick={() => setModal(false)}><X className="h-5 w-5 text-slate-500 hover:text-slate-700" /></button>
+  </div>
+
+  {/* Select Existing Shop / Customer Option */}
+  {safeShops.length > 0 && (
+    <div className="mb-3">
+      <label className="text-xs text-slate-600 font-medium">Select Existing Shop / Customer (Optional)</label>
+      <select
+        value={shopId}
+        onChange={(e) => handleSelectShop(e.target.value)}
+        className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
+      >
+        <option value="" className="bg-white text-slate-800">-- Choose Shop or Customer --</option>
+        {safeShops.map((s) => (
+          <option key={s.id || s._id} value={s.id || s._id} className="bg-white text-slate-800">
+            {s.shop_no ? `${s.shop_no} - ` : ""}{s.name}
+          </option>
+        ))}
+      </select>
     </div>
-  );
-}
+  )}
 
-function PaymentModal({ invoice, onClose, onDone }) {
-  const [amount, setAmount] = useState(String(invoice.balance ?? invoice.total_amount ?? invoice.grand_total));
-  const [mode, setMode] = useState("UPI");
-  const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
-  const [saving, setSaving] = useState(false);
+  {/* Invoice & Company Basic Information */}
+  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+    <div>
+      <label className="text-xs text-slate-600 font-medium">Invoice No.</label>
+      <input type="text" required placeholder="INV-20261002-1234" value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)}
+        className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 font-mono text-cyan-700 placeholder:text-slate-400" />
+    </div>
+    <div>
+      <label className="text-xs text-amber-600 font-medium">Party / Company Name</label>
+      <input type="text" required placeholder="Enter Company / Party Name" value={partyName} onChange={(e) => setPartyName(e.target.value)}
+        className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm text-amber-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
+    </div>
+  </div>
 
-  const submit = async (e) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      await api.post("/payments", {
-        shop_id: invoice.shop_id || invoice.shopId || null,
-        invoice_id: invoice.id || invoice._id,
-        amount: parseFloat(amount),
-        mode,
-        payment_date: new Date(payDate).toISOString()
-      });
-      toast.success("Payment recorded");
-      onDone();
-    } catch { toast.error("Failed to record payment"); }
-    finally { setSaving(false); }
-  };
+  {/* Location, Supervisor & Mobile No */}
+  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+    <div>
+      <label className="text-xs text-slate-600 font-medium">Location / Address</label>
+      <input type="text" placeholder="Location Name" value={location} onChange={(e) => setLocation(e.target.value)}
+        className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
+    </div>
+    <div>
+      <label className="text-xs text-slate-600 font-medium">Supervisor / Contact Person</label>
+      <input type="text" placeholder="Supervisor Name" value={supervisor} onChange={(e) => setSupervisor(e.target.value)}
+        className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
+    </div>
+    <div>
+      <label className="text-xs text-slate-600 font-medium">Mobile No.</label>
+      <input type="tel" placeholder="9876543210" value={contact} onChange={(e) => setContact(e.target.value)}
+        className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
+    </div>
+  </div>
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
-      <form onSubmit={submit} className="glass relative z-10 w-full max-w-sm rounded-2xl p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="font-display text-lg font-semibold">Record Payment · {invoice.invoice_no}</h3>
-          <button type="button" onClick={onClose}><X className="h-5 w-5 text-slate-400" /></button>
+  {/* Logistics & Date */}
+  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+    <div>
+      <label className="text-xs text-slate-600 font-medium">Invoice Date</label>
+      <input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+    </div>
+    <div>
+      <label className="text-xs text-slate-600 font-medium">Truck No.</label>
+      <input type="text" placeholder="TN 01 AB 1234" value={truckNo} onChange={(e) => setTruckNo(e.target.value)} className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
+    </div>
+    <div>
+      <label className="text-xs text-slate-600 font-medium">Total Weight (kg)</label>
+      <input type="number" step="0.01" min="0" placeholder="1500" value={totalWeight} onChange={(e) => setTotalWeight(e.target.value)} className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
+    </div>
+  </div>
+
+  {/* Line Items */}
+  <label className="text-xs text-slate-600 font-medium">Line Items</label>
+  <div className="mt-1 space-y-2">
+    {items.map((it, i) => (
+      <div key={i} className="grid grid-cols-12 gap-2 items-center">
+        <select value={BOX_TYPES.includes(it.description) ? it.description : ""} onChange={(e) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, description: e.target.value, rate: rateFor(e.target.value) } : x))}
+          className="col-span-4 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500">
+          {BOX_TYPES.map((t) => <option key={t} value={t} className="bg-white text-slate-800">{t}</option>)}
+        </select>
+        <input value={it.hsn} onChange={(e) => setItem(i, "hsn", e.target.value)} placeholder="HSN"
+          className="col-span-2 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
+        <input type="number" min="1" value={it.quantity} onChange={(e) => setItem(i, "quantity", e.target.value)} placeholder="Qty"
+          className="col-span-2 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
+        <input type="number" step="0.01" value={it.rate} onChange={(e) => setItem(i, "rate", e.target.value)} placeholder="Rate"
+          className="col-span-3 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
+        <button type="button" onClick={() => removeItem(i)} className="col-span-1 p-2 text-red-500 hover:text-red-700 flex justify-center"><Trash2 className="h-4 w-4" /></button>
+      </div>
+    ))}
+    <button type="button" onClick={addItem} className="text-xs font-semibold text-cyan-600 hover:text-cyan-700 flex items-center gap-1 mt-2">
+      <Plus className="h-3.5 w-3.5" /> Add Line Item
+    </button>
+  </div>
+
+  {/* Summary */}
+  <div className="mt-4 pt-3 border-t border-slate-200 text-xs space-y-1">
+    <div className="flex justify-between text-slate-600"><span>Taxable Amount</span><span>₹{taxable.toFixed(2)}</span></div>
+    <div className="flex justify-between text-slate-600"><span>CGST ({cgp}%)</span><span>₹{cgst.toFixed(2)}</span></div>
+    <div className="flex justify-between text-slate-600"><span>SGST ({sgp}%)</span><span>₹{sgp.toFixed(2)}</span></div>
+    <div className="flex justify-between font-bold text-sm text-slate-900 pt-1 border-t border-slate-200"><span>Grand Total</span><span>₹{total.toFixed(2)}</span></div>
+  </div>
+
+  <button type="submit" disabled={saving} className="mt-5 w-full rounded-xl bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 py-3 text-sm font-semibold text-white active:scale-95 transition shadow-sm">
+    {saving ? "Saving…" : editId ? "Update Sale Invoice" : "Create Sale Invoice"}
+  </button>
+</form>
         </div>
-        <p className="text-xs text-slate-500 mb-3">Closing Balance due: <span className="text-amber-300 font-mono">{inr(invoice.balance ?? invoice.total_amount ?? invoice.grand_total)}</span></p>
-        <div className="space-y-3">
-          <div><label className="text-xs text-slate-500">Amount (₹)</label>
-            <input type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} required className="mt-1 w-full rounded-xl bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50" /></div>
-          <div><label className="text-xs text-slate-500">Mode</label>
-            <select value={mode} onChange={(e) => setMode(e.target.value)} className="mt-1 w-full rounded-xl bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50">
-              {["UPI", "Cash", "Bank Transfer", "Cheque"].map((m) => <option key={m} value={m}>{m}</option>)}
-            </select></div>
-          <div><label className="text-xs text-slate-500">Date</label>
-            <input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} className="mt-1 w-full rounded-xl bg-white/5 border border-white/10 py-2.5 px-3 text-sm outline-none focus:border-cyan-500/50" /></div>
-        </div>
-        <button disabled={saving} className="mt-5 w-full rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 py-3 font-semibold text-slate-900 active:scale-95 transition disabled:opacity-60">
-          {saving ? "Saving…" : "Save Payment"}
-        </button>
-      </form>
+      )}
     </div>
   );
 }

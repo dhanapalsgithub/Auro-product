@@ -3,15 +3,17 @@ import api from "@/lib/apiClient";
 import { PageHeader, Card } from "@/components/Shell";
 import Pager from "@/components/Pager";
 import { exportToCsv, fmtDate } from "@/lib/helpers";
-import { Boxes, Package, Scale, Store, Download, Search } from "lucide-react";
+import { Boxes, Package, Scale, Store, Download, Search, Calendar, X } from "lucide-react";
 
-const PAGE_SIZE = 12;
+const PAGE_SIZE = 5;
 
 export default function Inventory() {
   const [data, setData] = useState(null);
   const [entries, setEntries] = useState([]);
   const [shops, setShops] = useState([]);
   const [search, setSearch] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
 
@@ -55,14 +57,31 @@ export default function Inventory() {
   }, []);
 
   const computedRows = useMemo(() => {
-    if (data?.rows || data?.records) {
-      return data.rows || data.records || [];
-    }
-
     const safeEntries = Array.isArray(entries) ? entries : [];
     const safeShops = Array.isArray(shops) ? shops : [];
 
-    if (!safeEntries.length) return [];
+    // Filter entries by date range before aggregating
+    const dateFilteredEntries = safeEntries.filter((entry) => {
+      if (!entry) return false;
+      const entryDateStr = entry.entry_date || entry.created_at;
+      if (!entryDateStr) return true;
+
+      const entryDate = new Date(entryDateStr).getTime();
+      const start = startDate ? new Date(startDate).setHours(0, 0, 0, 0) : null;
+      const end = endDate ? new Date(endDate).setHours(23, 59, 59, 999) : null;
+
+      if (start && entryDate < start) return false;
+      if (end && entryDate > end) return false;
+
+      return true;
+    });
+
+    if (!dateFilteredEntries.length && (startDate || endDate)) return [];
+
+    // Fall back to server pre-aggregated data only if no date filter is applied
+    if (!startDate && !endDate && (data?.rows || data?.records)) {
+      return data.rows || data.records || [];
+    }
 
     const shopMap = {};
     safeShops.forEach((s) => {
@@ -71,8 +90,7 @@ export default function Inventory() {
 
     const aggregated = {};
 
-    safeEntries.forEach((entry) => {
-      if (!entry) return;
+    dateFilteredEntries.forEach((entry) => {
       const sId = entry.shop_id;
       const shop = shopMap[sId] || {};
       const shopNo = shop.shop_no || entry.shop_no || `Shop #${sId}`;
@@ -110,7 +128,7 @@ export default function Inventory() {
     });
 
     return Object.values(aggregated);
-  }, [data, entries, shops]);
+  }, [data, entries, shops, startDate, endDate]);
 
   const filtered = useMemo(() => {
     if (!search) return computedRows;
@@ -127,19 +145,19 @@ export default function Inventory() {
   const rows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   const totalBoxes = useMemo(() => {
-    if (data?.total_boxes !== undefined) return data.total_boxes;
+    if (!startDate && !endDate && data?.total_boxes !== undefined) return data.total_boxes;
     return computedRows.reduce((sum, r) => sum + Number(r.total_boxes || 0), 0);
-  }, [data, computedRows]);
+  }, [data, computedRows, startDate, endDate]);
 
   const totalWaste = useMemo(() => {
-    if (data?.total_waste !== undefined) return data.total_waste;
+    if (!startDate && !endDate && data?.total_waste !== undefined) return data.total_waste;
     return computedRows.reduce((sum, r) => sum + Number(r.total_waste || 0), 0);
-  }, [data, computedRows]);
+  }, [data, computedRows, startDate, endDate]);
 
   const activeShops = useMemo(() => {
-    if (data?.active_shops !== undefined) return data.active_shops;
+    if (!startDate && !endDate && data?.active_shops !== undefined) return data.active_shops;
     return computedRows.length;
-  }, [data, computedRows]);
+  }, [data, computedRows, startDate, endDate]);
 
   const doExport = () =>
     exportToCsv("inventory.csv", computedRows, [
@@ -192,7 +210,7 @@ export default function Inventory() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <Stat
           icon={Package}
-          label="Total Boxes Supplied"
+          label="Total Boxes Purchased"
           value={Number(totalBoxes).toLocaleString("en-IN")}
           accent="bg-cyan-500/15 text-cyan-300"
         />
@@ -211,18 +229,61 @@ export default function Inventory() {
       </div>
 
       <Card className="p-4 mb-4">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
-          <input
-            data-testid="inventory-search-input"
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(1);
-            }}
-            placeholder="Search shop…"
-            className="w-full rounded-xl bg-white/5 border border-white/10 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-cyan-500/50"
-          />
+        <div className="flex flex-col md:flex-row gap-4 items-center">
+          {/* Search Input */}
+          <div className="relative flex-1 w-full">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
+            <input
+              data-testid="inventory-search-input"
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
+              placeholder="Search shop…"
+              className="w-full rounded-xl bg-white/5 border border-white/10 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-cyan-500/50"
+            />
+          </div>
+
+          {/* Date Range Inputs */}
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+            <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm w-full sm:w-auto">
+              {/* <Calendar className="h-4 w-4 text-slate-400 shrink-0" /> */}
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => {
+                  setStartDate(e.target.value);
+                  setPage(1);
+                }}
+                className="bg-transparent text-black-200 outline-none text-xs sm:text-sm"
+              />
+              <span className="text-black-500">to</span>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => {
+                  setEndDate(e.target.value);
+                  setPage(1);
+                }}
+                className="bg-transparent text-black-200 outline-none text-xs sm:text-sm"
+              />
+            </div>
+
+            {(startDate || endDate) && (
+              <button
+                onClick={() => {
+                  setStartDate("");
+                  setEndDate("");
+                  setPage(1);
+                }}
+                className="flex items-center gap-1 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs text-slate-400 hover:text-white hover:bg-white/10 transition"
+                title="Clear Date Filter"
+              >
+                <X className="h-3.5 w-3.5" /> Clear
+              </button>
+            )}
+          </div>
         </div>
       </Card>
 

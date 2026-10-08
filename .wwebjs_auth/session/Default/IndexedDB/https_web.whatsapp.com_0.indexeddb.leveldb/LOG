@@ -1,0 +1,32 @@
+2026/10/07-13:58:52.968 25d0 Creating DB D:\AuroProducts\Auro-product\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb since it was missing.
+2026/10/07-13:58:52.996 25d0 Reusing MANIFEST D:\AuroProducts\Auro-product\.wwebjs_auth\session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/10/07-16:17:42.683 4c40 Level-0 table #5: started
+2026/10/07-16:17:42.955 4c40 Level-0 table #5: 1170832 bytes OK
+2026/10/07-16:17:42.969 4c40 Delete type=0 #3
+2026/10/07-18:26:08.052 4c40 Level-0 table #7: started
+2026/10/07-18:26:08.099 4c40 Level-0 table #7: 859458 bytes OK
+2026/10/07-18:26:08.105 4c40 Delete type=0 #4
+2026/10/07-18:28:43.678 8df0 Compacting 1@1 + 1@2 files
+2026/10/07-18:28:43.762 8df0 Generated table #8@1: 9192 keys, 832101 bytes
+2026/10/07-18:28:43.764 8df0 Compacted 1@1 + 1@2 files => 832101 bytes
+2026/10/07-18:28:43.767 8df0 compacted to: files[ 0 0 1 0 0 0 0 ]
+2026/10/07-18:28:43.771 8df0 Delete type=2 #5
+2026/10/07-18:28:43.771 8df0 Delete type=2 #7
+2026/10/07-19:40:02.502 4c40 Level-0 table #10: started
+2026/10/07-19:40:02.546 4c40 Level-0 table #10: 801442 bytes OK
+2026/10/07-19:40:02.553 4c40 Delete type=0 #6
+2026/10/07-19:43:29.736 25d0 Compacting 1@1 + 1@2 files
+2026/10/07-19:43:29.834 25d0 Generated table #11@1: 11118 keys, 1193589 bytes
+2026/10/07-19:43:29.835 25d0 Compacted 1@1 + 1@2 files => 1193589 bytes
+2026/10/07-19:43:29.838 25d0 compacted to: files[ 0 0 1 0 0 0 0 ]
+2026/10/07-19:43:29.840 25d0 Delete type=2 #8
+2026/10/07-19:43:29.841 25d0 Delete type=2 #10
+2026/10/07-20:41:29.825 25d0 Level-0 table #13: started
+2026/10/07-20:41:29.855 25d0 Level-0 table #13: 779254 bytes OK
+2026/10/07-20:41:29.861 25d0 Delete type=0 #9
+2026/10/08-00:04:41.366 4c40 Compacting 1@1 + 1@2 files
+2026/10/08-00:04:41.719 4c40 Generated table #14@1: 12944 keys, 1532419 bytes
+2026/10/08-00:04:41.719 4c40 Compacted 1@1 + 1@2 files => 1532419 bytes
+2026/10/08-00:04:41.740 4c40 compacted to: files[ 0 0 1 0 0 0 0 ]
+2026/10/08-00:04:41.741 4c40 Delete type=2 #11
+2026/10/08-00:04:41.742 4c40 Delete type=2 #13

@@ -103,7 +103,7 @@ export default function Shops() {
             ].sort();
             setInvoiceParties(names);
           }
-        }).catch(() => {});
+        }).catch(() => { });
       });
 
     // 3. Fetch Opening Balance Settings
@@ -127,9 +127,29 @@ export default function Shops() {
   }, [search, district]);
 
   useEffect(() => {
-    api.get("/shops/districts").then((r) => setDistricts(r.data.sort()));
-  }, []);
+    api.get("/shops/districts")
+      .then((r) => {
+        // 1. தரவு Array தானா எனப் பாதுகாப்பாகச் சரிபார்த்தல்
+        const rawData = Array.isArray(r.data)
+          ? r.data
+          : Array.isArray(r.data?.districts)
+            ? r.data.districts
+            : Array.isArray(r.data?.data)
+              ? r.data.data
+              : [];
 
+        // 2. பாதுகாப்பாக Alphabetical Order-ல் Sort செய்தல் (Case-insensitive)
+        const sortedDistricts = [...rawData].sort((a, b) =>
+          String(a).localeCompare(String(b))
+        );
+
+        setDistricts(sortedDistricts);
+      })
+      .catch((err) => {
+        console.error("Failed to load districts:", err);
+        setDistricts([]); // பிழை ஏற்பட்டால் காலியான Array அமைத்தல்
+      });
+  }, []);
   // Dynamic filter for shop records based on search, district, type/party selection, and date range
   const filteredShops = useMemo(() => {
     return (shops || [])
@@ -242,17 +262,25 @@ export default function Shops() {
     }
   };
 
+  // Replace the del function in Shops.jsx:
   const del = async (id) => {
     if (!canEdit) {
       toast.error("Permission denied: Only admins can delete shops.");
       return;
     }
     if (!window.confirm("Delete this shop?")) return;
-    await api.delete(`/shops/${id}`);
-    toast.success("Shop deleted");
-    load();
-  };
 
+    try {
+      // Correct call (Axios automatically prepends /api)
+      await api.delete(`/shops/${id}`);
+      toast.success("Shop deleted");
+      load();
+    } catch (err) {
+      toast.error(
+        err.response?.data?.detail || "Failed to delete shop."
+      );
+    }
+  };
   const onImport = async (e) => {
     if (!canEdit) {
       toast.error("Permission denied: Import requires admin rights.");
@@ -380,7 +408,7 @@ export default function Shops() {
             <option value="party" className="bg-slate-900 text-slate-200">
               Party / Purchase Entries Only
             </option>
-            
+
             {/* Dynamic GST Invoice Parties List
             {invoiceParties.length > 0 && (
               <optgroup label="── GST Invoice Parties ──" className="bg-slate-900 text-cyan-400 font-semibold">

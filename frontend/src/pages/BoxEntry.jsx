@@ -64,17 +64,23 @@ export default function BoxEntry() {
     loadEntries();
   }, []);
 
-  // Map shop data by ID safely
+  // Sync route params when updated
+  useEffect(() => {
+    const sParam = params.get("shop");
+    if (sParam) {
+      setShopId(sParam);
+    }
+  }, [params]);
+
   const shopMap = useMemo(() => {
     const map = {};
     const safeShops = Array.isArray(shops) ? shops : [];
     safeShops.forEach((s) => {
-      if (s && s.id) map[s.id] = s;
+      if (s && (s.id || s._id)) map[s.id || s._id] = s;
     });
     return map;
   }, [shops]);
 
-  // Dynamic calculations: Cotton Box Amount + 5% GST
   const bQtyNum = parseInt(brandyQty || "0", 10);
   const bRateNum = parseFloat(brandyRate || "0");
   const brandyAmount = bQtyNum * bRateNum;
@@ -83,16 +89,15 @@ export default function BoxEntry() {
   const beerRateNum = parseFloat(beerRate || "0");
   const beerAmount = beerQtyNum * beerRateNum;
 
-  const cottonBoxAmount = brandyAmount + beerAmount; // Gross Cotton Box Amount
-  const cgstAmount = cottonBoxAmount * 0.025; // 2.5% CGST
-  const sgstAmount = cottonBoxAmount * 0.025; // 2.5% SGST
-  const totalGstAmount = cgstAmount + sgstAmount; // 5% GST Amount
-  const grandTotal = Math.round(cottonBoxAmount + totalGstAmount); // Total = Cotton Box Amount + GST Amount
+  const cottonBoxAmount = brandyAmount + beerAmount;
+  const cgstAmount = cottonBoxAmount * 0.025;
+  const sgstAmount = cottonBoxAmount * 0.025;
+  const totalGstAmount = cgstAmount + sgstAmount;
+  const grandTotal = Math.round(cottonBoxAmount + totalGstAmount);
 
   const totalBoxes = bQtyNum + beerQtyNum;
   const waste = totalBoxes > 0 ? totalBoxes / divisor : 0;
 
-  // Safe filtered records
   const filteredEntries = useMemo(() => {
     const safeEntries = Array.isArray(entries) ? entries : [];
     return safeEntries
@@ -233,7 +238,7 @@ export default function BoxEntry() {
   const currentShop = useMemo(() => {
     if (!previewEntry) return null;
     const safeShops = Array.isArray(shops) ? shops : [];
-    return safeShops.find((s) => s.id === previewEntry.shop_id) || {
+    return safeShops.find((s) => s.id === previewEntry.shop_id || s._id === previewEntry.shop_id) || {
       shop_no: previewEntry.shop_no,
       name: previewEntry.shop_name,
       location: previewEntry.location || "kovur",
@@ -532,7 +537,7 @@ export default function BoxEntry() {
               >
                 <option value="">Select shop…</option>
                 {safeShops.map((s) => (
-                  <option key={s.id} value={s.id}>
+                  <option key={s.id || s._id} value={s.id || s._id}>
                     {s.shop_no} · {s.name}
                   </option>
                 ))}

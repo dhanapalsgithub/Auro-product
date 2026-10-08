@@ -1,105 +1,101 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Search, RefreshCw, X, CreditCard } from 'lucide-react';
-
-const API_BASE = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+import api from '@/lib/apiClient';
 
 const safeExtractArray = (data) => {
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.data)) return data.data;
   if (Array.isArray(data?.rows)) return data.rows;
+  if (Array.isArray(data?.items)) return data.items;
   return [];
 };
 
-const PaymentManagement = ({
+export default function PaymentManagement({
   purchaseInvoices: initialPurchase = [],
   salesInvoices: initialSales = [],
   openingBalance: initialOB = 0,
   onRefresh
-}) => {
-  const [activeTab, setActiveTab] = useState('purchase'); // 'purchase' | 'sales'
+}) {
+  const location = useLocation();
+
+  const [activeTab, setActiveTab] = useState('purchase');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedShop, setSelectedShop] = useState('All');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
 
-  // Internal state
-  const [purchaseData, setPurchaseData] = useState(safeExtractArray(initialPurchase));
-  const [salesData, setSalesData] = useState(safeExtractArray(initialSales));
+  const [purchaseData, setPurchaseData] = useState([]);
+  const [salesData, setSalesData] = useState([]);
   const [paymentsData, setPaymentsData] = useState([]);
   const [openingBalance, setOpeningBalance] = useState(initialOB);
   const [loading, setLoading] = useState(false);
 
-  // Modal State for Payment
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMode, setPaymentMode] = useState('UPI');
   const [paymentNotes, setPaymentNotes] = useState('');
   const [submittingPayment, setSubmittingPayment] = useState(false);
 
-  // Sync internal state with props if provided
   useEffect(() => {
-    setPurchaseData(safeExtractArray(initialPurchase));
+    const arr = safeExtractArray(initialPurchase);
+    if (arr.length > 0) setPurchaseData(arr);
   }, [initialPurchase]);
 
   useEffect(() => {
-    setSalesData(safeExtractArray(initialSales));
+    const arr = safeExtractArray(initialSales);
+    if (arr.length > 0) setSalesData(arr);
   }, [initialSales]);
 
   useEffect(() => {
-    setOpeningBalance(initialOB);
+    if (initialOB) setOpeningBalance(initialOB);
   }, [initialOB]);
 
-  // Comprehensive Auto-Fetch
-  const fetchData = async () => {
+  useEffect(() => {
+    setSelectedInvoice(null);
+  }, [location.pathname]);
+
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [entriesRes, invoicesRes, paymentsRes, obRes] = await Promise.all([
-        fetch(`${API_BASE}/api/entries`),
-        fetch(`${API_BASE}/api/invoices`),
-        fetch(`${API_BASE}/api/payments`),
-        fetch(`${API_BASE}/api/settings/opening-balance`)
+      const [entriesRes, invoicesRes, paymentsRes, obRes] = await Promise.allSettled([
+        api.get('/entries'),
+        api.get('/invoices'),
+        api.get('/payments'),
+        api.get('/settings/opening-balance')
       ]);
 
-      if (entriesRes.ok) {
-        const entries = await entriesRes.json();
-        setPurchaseData(safeExtractArray(entries));
+      if (entriesRes.status === 'fulfilled') {
+        setPurchaseData(safeExtractArray(entriesRes.value.data));
       }
-
-      if (invoicesRes.ok) {
-        const invoices = await invoicesRes.json();
-        setSalesData(safeExtractArray(invoices));
+      if (invoicesRes.status === 'fulfilled') {
+        setSalesData(safeExtractArray(invoicesRes.value.data));
       }
-
-      if (paymentsRes.ok) {
-        const payments = await paymentsRes.json();
-        setPaymentsData(safeExtractArray(payments));
+      if (paymentsRes.status === 'fulfilled') {
+        setPaymentsData(safeExtractArray(paymentsRes.value.data));
       }
-
-      if (obRes.ok) {
-        const obData = await obRes.json();
-        setOpeningBalance(Number(obData.opening_balance || 0));
+      if (obRes.status === 'fulfilled') {
+        setOpeningBalance(Number(obRes.value.data?.opening_balance || 0));
       }
     } catch (err) {
-      console.error("Failed to load invoice/payment data:", err);
+      console.error("Failed to load payment management data:", err);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
 
   const handleRefresh = () => {
     if (onRefresh) onRefresh();
     fetchData();
   };
 
-  // Map payments by invoice_id and entry_id
   const paymentsByEntry = useMemo(() => {
     const map = {};
-    const safePayments = safeExtractArray(paymentsData);
-    safePayments.forEach((p) => {
+    safeExtractArray(paymentsData).forEach((p) => {
       if (p && p.entry_id) {
         map[p.entry_id] = (map[p.entry_id] || 0) + Number(p.amount || 0);
       }
@@ -109,8 +105,7 @@ const PaymentManagement = ({
 
   const paymentsByInvoice = useMemo(() => {
     const map = {};
-    const safePayments = safeExtractArray(paymentsData);
-    safePayments.forEach((p) => {
+    safeExtractArray(paymentsData).forEach((p) => {
       if (p && p.invoice_id) {
         map[p.invoice_id] = (map[p.invoice_id] || 0) + Number(p.amount || 0);
       }
@@ -118,19 +113,15 @@ const PaymentManagement = ({
     return map;
   }, [paymentsData]);
 
-  // --- Purchase Metrics ---
   const purchaseMetrics = useMemo(() => {
     let totalPurchaseWithGst = 0;
-    const safePurchases = safeExtractArray(purchaseData);
-
-    const list = safePurchases.map((inv) => {
+    const list = safeExtractArray(purchaseData).map((inv) => {
       if (!inv) return null;
       const invoiceNo = inv.invoice_no || (inv.id ? `#ENTRY-${inv.id}` : '—');
       const shopName = inv.shop_name || inv.supplier || inv.name || inv.customer_name || '—';
       const rawDate = inv.entry_date || inv.date || inv.created_at || 'N/A';
       
       const totalAmount = Number(inv.total_amount || inv.grand_total || inv.amount || 0);
-      
       const paidFromPayments = paymentsByEntry[inv.id] || 0;
       const paidAmount = Number(inv.amount_paid || inv.paid_amount || paidFromPayments);
       const pendingAmount = Math.max(0, totalAmount - paidAmount);
@@ -155,20 +146,17 @@ const PaymentManagement = ({
     return { list, totalPurchaseWithGst, closingBalance };
   }, [purchaseData, openingBalance, paymentsByEntry]);
 
-  // --- Sales Metrics ---
   const salesMetrics = useMemo(() => {
     let totalSaleAmount = 0;
     let totalPaidAmount = 0;
-    const safeSales = safeExtractArray(salesData);
 
-    const list = safeSales.map((inv) => {
+    const list = safeExtractArray(salesData).map((inv) => {
       if (!inv) return null;
       const invoiceNo = inv.invoice_no || inv.invoice_id || (inv.id ? `#INV-${inv.id}` : '—');
       const shopName = inv.shop_name || inv.party_name || inv.customer_name || inv.customer || '—';
       const rawDate = inv.invoice_date || inv.date || inv.created_at || 'N/A';
 
       const totalAmount = Number(inv.total_amount || inv.grand_total || inv.amount || 0);
-      
       const paidFromPayments = paymentsByInvoice[inv.id] || 0;
       const paidAmount = Math.max(
         Number(inv.amount_paid || inv.received_amount || inv.paid_amount || 0),
@@ -197,7 +185,6 @@ const PaymentManagement = ({
     return { list, totalSaleAmount, totalPaidAmount, totalOutstanding };
   }, [salesData, paymentsByInvoice]);
 
-  // Extract distinct shop names
   const uniqueShops = useMemo(() => {
     const shops = new Set();
     [...purchaseMetrics.list, ...salesMetrics.list].forEach((item) => {
@@ -206,7 +193,6 @@ const PaymentManagement = ({
     return Array.from(shops);
   }, [purchaseMetrics.list, salesMetrics.list]);
 
-  // Filtered List based on Search & Select Inputs
   const filteredInvoices = useMemo(() => {
     const currentList = activeTab === 'purchase' ? purchaseMetrics.list : salesMetrics.list;
 
@@ -220,18 +206,25 @@ const PaymentManagement = ({
       const matchesShop = selectedShop === 'All' || inv.shop_name === selectedShop;
 
       let matchesDate = true;
-      if (startDate && inv.raw_date !== 'N/A') {
-        matchesDate = matchesDate && new Date(inv.raw_date) >= new Date(startDate);
+      if (startDate && inv.raw_date && inv.raw_date !== 'N/A') {
+        const itemTime = new Date(inv.raw_date).getTime();
+        const startTime = new Date(startDate).getTime();
+        if (!isNaN(itemTime) && !isNaN(startTime)) {
+          matchesDate = matchesDate && itemTime >= startTime;
+        }
       }
-      if (endDate && inv.raw_date !== 'N/A') {
-        matchesDate = matchesDate && new Date(inv.raw_date) <= new Date(endDate);
+      if (endDate && inv.raw_date && inv.raw_date !== 'N/A') {
+        const itemTime = new Date(inv.raw_date).getTime();
+        const endTime = new Date(endDate).getTime();
+        if (!isNaN(itemTime) && !isNaN(endTime)) {
+          matchesDate = matchesDate && itemTime <= endTime;
+        }
       }
 
       return matchesSearch && matchesShop && matchesDate;
     });
   }, [activeTab, purchaseMetrics.list, salesMetrics.list, searchQuery, selectedShop, startDate, endDate]);
 
-  // Submit Payment Action
   const handlePaymentSubmit = async (e) => {
     e.preventDefault();
     if (!selectedInvoice || !paymentAmount || Number(paymentAmount) <= 0) return;
@@ -246,27 +239,17 @@ const PaymentManagement = ({
         amount: parseFloat(paymentAmount),
         mode: paymentMode,
         payment_date: new Date().toISOString(),
-        notes: paymentNotes
+        notes: paymentNotes || ''
       };
 
-      const res = await fetch(`${API_BASE}/api/payments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      if (res.ok) {
-        setSelectedInvoice(null);
-        setPaymentAmount('');
-        setPaymentNotes('');
-        fetchData();
-      } else {
-        const errorData = await res.json();
-        alert(`Payment error: ${errorData.detail || 'Failed to submit payment'}`);
-      }
+      await api.post('/payments', payload);
+      setSelectedInvoice(null);
+      setPaymentAmount('');
+      setPaymentNotes('');
+      fetchData();
     } catch (err) {
       console.error("Error submitting payment:", err);
-      alert("Failed to record payment.");
+      alert(err?.response?.data?.detail || "Failed to record payment.");
     } finally {
       setSubmittingPayment(false);
     }
@@ -274,7 +257,6 @@ const PaymentManagement = ({
 
   return (
     <div className="p-6 bg-slate-50 min-h-screen">
-      {/* Header */}
       <div className="flex justify-between items-center mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Payment Management</h1>
@@ -292,7 +274,6 @@ const PaymentManagement = ({
         </button>
       </div>
 
-      {/* Summary Cards */}
       {activeTab === 'purchase' ? (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
@@ -325,7 +306,6 @@ const PaymentManagement = ({
         </div>
       )}
 
-      {/* Filter Controls */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm mb-6">
         <div className="flex flex-wrap items-center gap-4">
           <div className="relative flex-1 min-w-[240px]">
@@ -365,7 +345,6 @@ const PaymentManagement = ({
           />
         </div>
 
-        {/* Tab Navigation */}
         <div className="flex border-b border-slate-200 mt-4">
           <button
             onClick={() => setActiveTab('purchase')}
@@ -390,7 +369,6 @@ const PaymentManagement = ({
         </div>
       </div>
 
-      {/* Data Table */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
         <table className="w-full text-left border-collapse">
           <thead>
@@ -468,7 +446,6 @@ const PaymentManagement = ({
         </table>
       </div>
 
-      {/* Payment Processing Modal */}
       {selectedInvoice && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-md overflow-hidden">
@@ -572,6 +549,4 @@ const PaymentManagement = ({
       )}
     </div>
   );
-};
-
-export default PaymentManagement;
+}
