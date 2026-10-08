@@ -777,7 +777,7 @@ export default function Shops() {
                   placeholder="e.g. Accountant Name / Admin"
                   value={enteredBy}
                   onChange={(e) => setEnteredBy(e.target.value)}
-                  className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm text-white outline-none focus:border-cyan-500/50"
+                  className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm text-black outline-none focus:border-cyan-500/50"
                 />
               </div>
 
