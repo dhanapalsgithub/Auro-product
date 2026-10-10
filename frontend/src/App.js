@@ -61,7 +61,7 @@ function App() {
               <Route path="/settings" element={<Settings />} />
             </Route>
 
-            {/* Catch-all Redirect */}
+            {/* Catch-all Redirec */}
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </AuthProvider>
