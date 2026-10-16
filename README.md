@@ -6,6 +6,8 @@ npm start
 cd backend
 python server.py
 
+bacend deploy - render
+
 https://distant-curtain-sixtieth.ngrok-free.dev/scan-qr
 
 

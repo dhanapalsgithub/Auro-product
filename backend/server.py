@@ -1010,6 +1010,12 @@ def create_entry(entry: EntryCreate, db: Session = Depends(get_db)):
     computed_qty = entry.quantity if (entry.quantity is not None and entry.quantity > 0) else ((entry.brandy_qty or 0) + (entry.beer_qty or 0))
     computed_taxable = entry.cotton_box_amount if (entry.cotton_box_amount is not None and entry.cotton_box_amount > 0) else 0.0
 
+    # Calculate waste strictly from brandy boxes
+    setting = db.query(SettingModel).filter(SettingModel.key == "waste_divisor").first()
+    divisor = float(setting.value) if (setting and setting.value) else 12.0
+    brandy_q = entry.brandy_qty or 0
+    calculated_waste = round(brandy_q / divisor, 2) if (entry.waste_kg is None or entry.waste_kg == 0.0) else entry.waste_kg
+
     db_entry = EntryModel(
         shop_id=entry.shop_id,
         box_type=entry.box_type,
@@ -1018,7 +1024,7 @@ def create_entry(entry: EntryCreate, db: Session = Depends(get_db)):
         beer_qty=entry.beer_qty or 0,
         beer_rate=entry.beer_rate or 16.0,
         quantity=computed_qty,
-        waste_kg=entry.waste_kg or 0.0,
+        waste_kg=calculated_waste,
         taxable_amount=computed_taxable,
         cgst_amount=entry.cgst_amount or 0.0,
         sgst_amount=entry.sgst_amount or 0.0,
@@ -1055,6 +1061,12 @@ def update_entry(entry_id: int, entry: EntryCreate, db: Session = Depends(get_db
 
     computed_qty = entry.quantity if (entry.quantity is not None and entry.quantity > 0) else ((entry.brandy_qty or 0) + (entry.beer_qty or 0))
 
+    # Calculate waste strictly from brandy boxes
+    setting = db.query(SettingModel).filter(SettingModel.key == "waste_divisor").first()
+    divisor = float(setting.value) if (setting and setting.value) else 12.0
+    brandy_q = entry.brandy_qty or 0
+    calculated_waste = round(brandy_q / divisor, 2) if (entry.waste_kg is None or entry.waste_kg == 0.0) else entry.waste_kg
+
     old_deduction = db_entry.opening_balance_deducted or db_entry.total_amount or 0.0
     new_deduction = entry.opening_balance_deducted or entry.total_amount or 0.0
     diff = new_deduction - old_deduction
@@ -1066,7 +1078,7 @@ def update_entry(entry_id: int, entry: EntryCreate, db: Session = Depends(get_db
     db_entry.beer_qty = entry.beer_qty or 0
     db_entry.beer_rate = entry.beer_rate or 16.0
     db_entry.quantity = computed_qty
-    db_entry.waste_kg = entry.waste_kg or 0.0
+    db_entry.waste_kg = calculated_waste
     db_entry.taxable_amount = entry.cotton_box_amount or 0.0
     db_entry.cgst_amount = entry.cgst_amount or 0.0
     db_entry.sgst_amount = entry.sgst_amount or 0.0

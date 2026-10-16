@@ -18,6 +18,7 @@ import {
   ArrowLeft,
   Search,
   RefreshCw,
+  Calendar,
 } from "lucide-react";
 
 const PAGE_SIZE = 5;
@@ -28,10 +29,14 @@ export default function BoxEntry() {
   const [entries, setEntries] = useState([]);
   const [canManage] = useState(localStorage.getItem("auro_can_edit") === "true");
 
-  // Search & Filter state
+  // Search & Filter state for records table
   const [searchTerm, setSearchTerm] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
+
+  // Shop entry selection search state
+  const [shopSearchInput, setShopSearchInput] = useState("");
+  const [showShopDropdown, setShowShopDropdown] = useState(false);
 
   // Form state
   const [shopId, setShopId] = useState(params.get("shop") || "");
@@ -72,14 +77,34 @@ export default function BoxEntry() {
     }
   }, [params]);
 
+  const safeShops = useMemo(() => (Array.isArray(shops) ? shops : []), [shops]);
+
   const shopMap = useMemo(() => {
     const map = {};
-    const safeShops = Array.isArray(shops) ? shops : [];
     safeShops.forEach((s) => {
       if (s && (s.id || s._id)) map[s.id || s._id] = s;
     });
     return map;
-  }, [shops]);
+  }, [safeShops]);
+
+  // Set initial shop search input when shopId changes
+  useEffect(() => {
+    if (shopId && shopMap[shopId]) {
+      const selected = shopMap[shopId];
+      setShopSearchInput(`${selected.shop_no} · ${selected.name}`);
+    }
+  }, [shopId, shopMap]);
+
+  // Filter shops for live entry input selection
+  const filteredShopsForSelect = useMemo(() => {
+    if (!shopSearchInput.trim()) return safeShops;
+    const query = shopSearchInput.toLowerCase().trim();
+    return safeShops.filter(
+      (s) =>
+        (s.shop_no || "").toString().toLowerCase().includes(query) ||
+        (s.name || "").toString().toLowerCase().includes(query)
+    );
+  }, [safeShops, shopSearchInput]);
 
   const bQtyNum = parseInt(brandyQty || "0", 10);
   const bRateNum = parseFloat(brandyRate || "0");
@@ -96,7 +121,8 @@ export default function BoxEntry() {
   const grandTotal = Math.round(cottonBoxAmount + totalGstAmount);
 
   const totalBoxes = bQtyNum + beerQtyNum;
-  const waste = totalBoxes > 0 ? totalBoxes / divisor : 0;
+  // Waste is calculated strictly from Brandy boxes
+  const waste = bQtyNum > 0 ? bQtyNum / divisor : 0;
 
   const filteredEntries = useMemo(() => {
     const safeEntries = Array.isArray(entries) ? entries : [];
@@ -138,7 +164,7 @@ export default function BoxEntry() {
       return;
     }
     if (!shopId) {
-      toast.error("Select a shop");
+      toast.error("Select a valid shop");
       return;
     }
     if (bQtyNum <= 0 && beerQtyNum <= 0) {
@@ -189,7 +215,11 @@ export default function BoxEntry() {
       return;
     }
     setEditingId(entryItem.id);
-    setShopId(entryItem.shop_id ? entryItem.shop_id.toString() : "");
+    const sid = entryItem.shop_id ? entryItem.shop_id.toString() : "";
+    setShopId(sid);
+    if (sid && shopMap[sid]) {
+      setShopSearchInput(`${shopMap[sid].shop_no} · ${shopMap[sid].name}`);
+    }
     setBrandyQty(entryItem.brandy_qty !== undefined ? entryItem.brandy_qty.toString() : "0");
     setBrandyRate(entryItem.brandy_rate !== undefined ? entryItem.brandy_rate.toString() : "16.00");
     setBeerQty(entryItem.beer_qty !== undefined ? entryItem.beer_qty.toString() : "0");
@@ -206,6 +236,8 @@ export default function BoxEntry() {
   const resetForm = () => {
     setEditingId(null);
     setShopId(params.get("shop") || "");
+    setShopSearchInput("");
+    setShowShopDropdown(false);
     setBrandyQty("");
     setBrandyRate("16.00");
     setBeerQty("");
@@ -237,13 +269,12 @@ export default function BoxEntry() {
 
   const currentShop = useMemo(() => {
     if (!previewEntry) return null;
-    const safeShops = Array.isArray(shops) ? shops : [];
     return safeShops.find((s) => s.id === previewEntry.shop_id || s._id === previewEntry.shop_id) || {
       shop_no: previewEntry.shop_no,
       name: previewEntry.shop_name,
       location: previewEntry.location || "kovur",
     };
-  }, [previewEntry, shops]);
+  }, [previewEntry, safeShops]);
 
   const renderInvoiceCopy = (copyTitle) => {
     if (!previewEntry) return null;
@@ -414,8 +445,6 @@ export default function BoxEntry() {
     );
   };
 
-  const safeShops = Array.isArray(shops) ? shops : [];
-
   return (
     <div>
       <style>{`
@@ -527,21 +556,66 @@ export default function BoxEntry() {
           </h2>
 
           <form onSubmit={submit} className="space-y-4">
+            {/* Wine Shop Auto-search & Selection */}
             <div>
               <label className="text-xs font-semibold text-slate-700 mb-1 block">Wine Shop</label>
-              <select
-                value={shopId}
-                onChange={(e) => setShopId(e.target.value)}
-                required
-                className="w-full rounded-xl border border-slate-300 bg-slate-50 py-2.5 px-3 text-sm text-slate-900 outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20 transition font-medium"
-              >
-                <option value="">Select shop…</option>
-                {safeShops.map((s) => (
-                  <option key={s.id || s._id} value={s.id || s._id}>
-                    {s.shop_no} · {s.name}
-                  </option>
-                ))}
-              </select>
+              <div className="relative">
+                <div className="relative">
+                  <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <input
+                    type="text"
+                    placeholder="Search shop by no or name..."
+                    value={shopSearchInput}
+                    onFocus={() => setShowShopDropdown(true)}
+                    onChange={(e) => {
+                      setShopSearchInput(e.target.value);
+                      setShowShopDropdown(true);
+                      setShopId("");
+                    }}
+                    className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-sm font-medium text-slate-900 focus:outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20"
+                  />
+                </div>
+
+                {/* Search result dropdown list */}
+                {showShopDropdown && (
+                  <div className="absolute z-20 top-full left-0 right-0 mt-1 max-h-56 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg divide-y divide-slate-100">
+                    {filteredShopsForSelect.length === 0 ? (
+                      <div className="p-3 text-xs text-slate-400 text-center">No matching shops found</div>
+                    ) : (
+                      filteredShopsForSelect.map((s) => (
+                        <div
+                          key={s.id || s._id}
+                          onClick={() => {
+                            const sid = (s.id || s._id).toString();
+                            setShopId(sid);
+                            setShopSearchInput(`${s.shop_no} · ${s.name}`);
+                            setShowShopDropdown(false);
+                          }}
+                          className="p-2.5 text-xs text-slate-800 hover:bg-emerald-50 hover:text-emerald-900 cursor-pointer transition flex justify-between items-center"
+                        >
+                          <span className="font-bold text-slate-900">{s.shop_no}</span>
+                          <span className="font-medium text-slate-600">{s.name}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Cotton Box Entry Date Selection */}
+            <div>
+              <label className="text-xs font-semibold text-slate-700 mb-1 block">Cotton Box Entry Date</label>
+              <div className="relative">
+                <Calendar className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <input
+                  type="date"
+                  value={entryDate}
+                  onChange={(e) => setEntryDate(e.target.value)}
+                  required
+                  className="w-full pl-10 pr-3 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 outline-none focus:border-emerald-500 focus:bg-white focus:ring-2 focus:ring-emerald-500/20"
+                />
+              </div>
             </div>
 
             <div className="space-y-3 bg-slate-50 p-4 rounded-xl border border-slate-200">
@@ -648,7 +722,7 @@ export default function BoxEntry() {
               </div>
 
               <div className="flex justify-between text-slate-700 font-medium pt-2 border-t border-slate-200">
-                <span>Waste Boxes ({totalBoxes} / {divisor || 12})</span>
+                <span>Waste Boxes (Brandy: {bQtyNum} / {divisor || 12})</span>
                 <span className="font-semibold">{waste.toFixed(2)} Boxes</span>
               </div>
 
