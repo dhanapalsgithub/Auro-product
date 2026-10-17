@@ -465,7 +465,7 @@ export default function Invoices() {
   </div>
 
   {/* Select Existing Shop / Customer Option */}
-  {safeShops.length > 0 && (
+  {/* {safeShops.length > 0 && (
     <div className="mb-3">
       <label className="text-xs text-slate-600 font-medium">Select Existing Shop / Customer (Optional)</label>
       <select
@@ -481,7 +481,7 @@ export default function Invoices() {
         ))}
       </select>
     </div>
-  )}
+  )} */}
 
   {/* Invoice & Company Basic Information */}
   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
