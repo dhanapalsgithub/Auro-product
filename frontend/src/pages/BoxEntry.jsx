@@ -41,9 +41,9 @@ export default function BoxEntry() {
   // Form state
   const [shopId, setShopId] = useState(params.get("shop") || "");
   const [brandyQty, setBrandyQty] = useState("");
-  const [brandyRate, setBrandyRate] = useState("16.00");
+  const [brandyRate, setBrandyRate] = useState("4.31");
   const [beerQty, setBeerQty] = useState("");
-  const [beerRate, setBeerRate] = useState("16.00");
+  const [beerRate, setBeerRate] = useState("4.31");
   const [entryDate, setEntryDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState("");
   const [divisor, setDivisor] = useState(12);
