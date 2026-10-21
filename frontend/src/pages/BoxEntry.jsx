@@ -221,9 +221,9 @@ export default function BoxEntry() {
       setShopSearchInput(`${shopMap[sid].shop_no} · ${shopMap[sid].name}`);
     }
     setBrandyQty(entryItem.brandy_qty !== undefined ? entryItem.brandy_qty.toString() : "0");
-    setBrandyRate(entryItem.brandy_rate !== undefined ? entryItem.brandy_rate.toString() : "16.00");
+    setBrandyRate(entryItem.brandy_rate !== undefined ? entryItem.brandy_rate.toString() : "4.31");
     setBeerQty(entryItem.beer_qty !== undefined ? entryItem.beer_qty.toString() : "0");
-    setBeerRate(entryItem.beer_rate !== undefined ? entryItem.beer_rate.toString() : "16.00");
+    setBeerRate(entryItem.beer_rate !== undefined ? entryItem.beer_rate.toString() : "4.31");
     setEntryDate(
       entryItem.entry_date
         ? entryItem.entry_date.slice(0, 10)
@@ -239,9 +239,9 @@ export default function BoxEntry() {
     setShopSearchInput("");
     setShowShopDropdown(false);
     setBrandyQty("");
-    setBrandyRate("16.00");
+    setBrandyRate("4.31");
     setBeerQty("");
-    setBeerRate("16.00");
+    setBeerRate("4.31");
     setEntryDate(new Date().toISOString().slice(0, 10));
     setNotes("");
   };
@@ -280,11 +280,11 @@ export default function BoxEntry() {
     if (!previewEntry) return null;
 
     const bQty = previewEntry.brandy_qty ?? 0;
-    const bRate = previewEntry.brandy_rate ?? 16.0;
+    const bRate = previewEntry.brandy_rate ?? 4.31;
     const bAmt = bQty * bRate;
 
     const beerQty = previewEntry.beer_qty ?? 0;
-    const beerRate = previewEntry.beer_rate ?? 16.0;
+    const beerRate = previewEntry.beer_rate ?? 4.31;
     const beerAmt = beerQty * beerRate;
 
     const boxAmount = bQty > 0 || beerQty > 0 ? (bAmt + beerAmt) : (previewEntry.cotton_box_amount ?? 0);
@@ -870,7 +870,7 @@ export default function BoxEntry() {
                   const shopName = shop?.name || row.shop_name || "—";
                   const bQty = row.brandy_qty ?? 0;
                   const beerQty = row.beer_qty ?? 0;
-                  const boxAmt = bQty > 0 || beerQty > 0 ? ((bQty * (row.brandy_rate ?? 16)) + (beerQty * (row.beer_rate ?? 16))) : (row.cotton_box_amount ?? 0);
+                  const boxAmt = bQty > 0 || beerQty > 0 ? ((bQty * (row.brandy_rate ?? 4.31)) + (beerQty * (row.beer_rate ?? 4.31))) : (row.cotton_box_amount ?? 0);
                   const gstAmt = boxAmt * 0.05;
                   const totalAmt = boxAmt + gstAmt;
                   const wasteKg = row.waste_kg ?? 0;
