@@ -181,6 +181,34 @@ class EntryCreate(BaseModel):
     notes: Optional[str] = None
 
 
+class ItemCreate(BaseModel):
+    description: str
+    quantity: int = 1
+    rate: float = 0.0
+    amount: Optional[float] = 0.0
+
+
+class InvoiceCreate(BaseModel):
+    invoice_no: Optional[str] = None
+    shop_id: Optional[int] = None
+    party_name: Optional[str] = None
+    customer_name: Optional[str] = None
+    location: Optional[str] = None
+    supervisor: Optional[str] = None
+    contact: Optional[str] = None
+    mobile: Optional[str] = None
+    address: Optional[str] = None
+    invoice_date: Optional[str] = None
+    invoice_type: Optional[str] = "SALES"
+    truck_no: Optional[str] = None
+    total_weight: Optional[float] = 0.0
+    waste_kg: Optional[float] = 0.0
+    taxable_amount: Optional[float] = 0.0
+    total_amount: Optional[float] = 0.0
+    amount_paid: Optional[float] = 0.0
+    items: List[ItemCreate] = []
+
+
 # --- API ENDPOINTS ---
 
 @app.get("/api/dashboard")
@@ -405,6 +433,8 @@ def delete_entry(entry_id: int, db: Session = Depends(get_db)):
     return {"message": "Entry deleted successfully"}
 
 
+# --- INVOICE ENDPOINTS ---
+
 @app.get("/api/invoices")
 @app.get("/invoices")
 def get_invoices(db: Session = Depends(get_db)):
@@ -426,204 +456,163 @@ def get_invoices(db: Session = Depends(get_db)):
         else:
             status = "unpaid"
 
+        items = [{"id": item.id, "description": item.description, "quantity": item.quantity, "rate": item.rate, "amount": item.amount} for item in i.items]
+
         result.append({
             "id": i.id,
             "invoice_no": i.invoice_no,
+            "shop_id": i.shop_id,
             "shop_no": i.shop.shop_no if i.shop else "—",
             "shop_name": i.shop.name if i.shop else (i.party_name or i.customer_name or "—"),
             "party_name": i.party_name or i.customer_name or "—",
             "customer_name": i.customer_name or i.party_name or "—",
+            "location": i.address or (i.shop.location if i.shop else ""),
+            "supervisor": i.supervisor,
+            "contact": i.mobile,
+            "waste_kg": i.waste_kg or 0.0,
+            "taxable_amount": i.taxable_amount or 0.0,
             "total_amount": tot,
             "amount_paid": float(paid),
             "status": status,
-            "invoice_date": i.invoice_date.isoformat() if i.invoice_date else None
+            "invoice_date": i.invoice_date.isoformat() if i.invoice_date else None,
+            "items": items
         })
     return result
 
 
-# --- FIXED REPORTS ENDPOINTS ---
-
-@app.get("/api/reports/daily")
-@app.get("/reports/daily")
-def get_daily_report(day: Optional[str] = None, db: Session = Depends(get_db)):
-    target_date = day or datetime.datetime.utcnow().strftime("%Y-%m-%d")
-    try:
-        start_dt = datetime.datetime.fromisoformat(target_date)
-        end_dt = start_dt + datetime.timedelta(days=1)
-    except Exception:
-        start_dt = datetime.datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
-        end_dt = start_dt + datetime.timedelta(days=1)
-
-    invoices = db.query(InvoiceModel).filter(
-        InvoiceModel.invoice_date >= start_dt,
-        InvoiceModel.invoice_date < end_dt
-    ).all()
-
-    entries = db.query(EntryModel).filter(
-        EntryModel.entry_date >= start_dt,
-        EntryModel.entry_date < end_dt
-    ).all()
-
-    sale_total = sum(i.total_amount or 0.0 for i in invoices if (i.invoice_type or "").upper() == "SALES")
+@app.get("/api/invoices/{invoice_id}")
+@app.get("/invoices/{invoice_id}")
+def get_single_invoice(invoice_id: int, db: Session = Depends(get_db)):
+    i = db.query(InvoiceModel).filter(InvoiceModel.id == invoice_id).first()
+    if not i:
+        raise HTTPException(status_code=404, detail="Invoice not found")
     
-    purchase_entries_total = sum(e.total_amount or 0.0 for e in entries)
-    purchase_invoices_total = sum(i.total_amount or 0.0 for i in invoices if (i.invoice_type or "").upper() != "SALES")
-    purchase_total = purchase_entries_total + purchase_invoices_total
-
-    gst_sales = sale_total * 0.05
-    gst_purchase = purchase_total * 0.05
-
+    items = [{"id": item.id, "description": item.description, "quantity": item.quantity, "rate": item.rate, "amount": item.amount} for item in i.items]
     return {
-        "date": target_date,
-        "sale_invoice_total": float(sale_total),
-        "purchase_invoice_total": float(purchase_total),
-        "gst_collected_sales": float(gst_sales),
-        "gst_collected_purchase": float(gst_purchase)
+        "id": i.id,
+        "invoice_no": i.invoice_no,
+        "shop_id": i.shop_id,
+        "shop_no": i.shop.shop_no if i.shop else "—",
+        "party_name": i.party_name or i.customer_name or "—",
+        "customer_name": i.customer_name or i.party_name or "—",
+        "location": i.address or "",
+        "supervisor": i.supervisor,
+        "contact": i.mobile,
+        "waste_kg": i.waste_kg or 0.0,
+        "taxable_amount": i.taxable_amount or 0.0,
+        "total_amount": i.total_amount or 0.0,
+        "amount_paid": i.amount_paid or 0.0,
+        "status": i.status or "unpaid",
+        "invoice_date": i.invoice_date.isoformat() if i.invoice_date else None,
+        "items": items
     }
 
 
-@app.get("/api/reports/monthly")
-@app.get("/reports/monthly")
-def get_monthly_report(month: Optional[str] = None, db: Session = Depends(get_db)):
-    target_month = month or datetime.datetime.utcnow().strftime("%Y-%m")
-    try:
-        year, m = map(int, target_month.split("-"))
-        start_dt = datetime.datetime(year, m, 1)
-        if m == 12:
-            end_dt = datetime.datetime(year + 1, 1, 1)
-        else:
-            end_dt = datetime.datetime(year, m + 1, 1)
-    except Exception:
-        start_dt = datetime.datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        end_dt = start_dt + datetime.timedelta(days=32)
+@app.post("/api/invoices")
+@app.post("/invoices")
+def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)):
+    if payload.invoice_date:
+        try:
+            inv_dt = datetime.datetime.fromisoformat(payload.invoice_date.replace("Z", "+00:00"))
+        except Exception:
+            inv_dt = datetime.datetime.utcnow()
+    else:
+        inv_dt = datetime.datetime.utcnow()
 
-    invoices = db.query(InvoiceModel).filter(
-        InvoiceModel.invoice_date >= start_dt,
-        InvoiceModel.invoice_date < end_dt
-    ).all()
+    # Auto-increment AP-INV-00001 sequence
+    if not payload.invoice_no:
+        last_inv = db.query(InvoiceModel).order_by(InvoiceModel.id.desc()).first()
+        next_num = 1
+        if last_inv and last_inv.invoice_no:
+            parts = last_inv.invoice_no.split("-")
+            if parts[-1].isdigit():
+                next_num = int(parts[-1]) + 1
+        inv_no = f"AP-INV-{next_num:05d}"
+    else:
+        inv_no = payload.invoice_no
 
-    entries = db.query(EntryModel).filter(
-        EntryModel.entry_date >= start_dt,
-        EntryModel.entry_date < end_dt
-    ).all()
+    new_inv = InvoiceModel(
+        invoice_no=inv_no,
+        shop_id=payload.shop_id,
+        party_name=payload.party_name or payload.customer_name or "Party",
+        customer_name=payload.customer_name or payload.party_name or "Party",
+        mobile=payload.contact or payload.mobile,
+        address=payload.location or payload.address,
+        supervisor=payload.supervisor,
+        invoice_date=inv_dt,
+        invoice_type=payload.invoice_type or "SALES",
+        waste_kg=payload.waste_kg or 0.0,
+        taxable_amount=payload.taxable_amount or 0.0,
+        total_amount=payload.total_amount or 0.0,
+        amount_paid=payload.amount_paid or 0.0,
+        status="unpaid"
+    )
 
-    sale_total = sum(i.total_amount or 0.0 for i in invoices if (i.invoice_type or "").upper() == "SALES")
-    
-    purchase_entries_total = sum(e.total_amount or 0.0 for e in entries)
-    purchase_invoices_total = sum(i.total_amount or 0.0 for i in invoices if (i.invoice_type or "").upper() != "SALES")
-    purchase_total = purchase_entries_total + purchase_invoices_total
+    db.add(new_inv)
+    db.commit()
+    db.refresh(new_inv)
 
-    gst_sales = sale_total * 0.05
-    gst_purchase = purchase_total * 0.05
+    for item in payload.items:
+        new_item = InvoiceItemModel(
+            invoice_id=new_inv.id,
+            description=item.description,
+            quantity=item.quantity,
+            rate=item.rate,
+            amount=item.amount or (item.quantity * item.rate)
+        )
+        db.add(new_item)
 
-    return {
-        "month": target_month,
-        "sale_invoice_total": float(sale_total),
-        "purchase_invoice_total": float(purchase_total),
-        "gst_collected_sales": float(gst_sales),
-        "gst_collected_purchase": float(gst_purchase)
-    }
-
-
-# --- FIXED COLLECTIONS ENDPOINT ---
-
-@app.get("/api/collections")
-@app.get("/collections")
-def get_collections(db: Session = Depends(get_db)):
-    shops = db.query(ShopModel).all()
-    invoices = db.query(InvoiceModel).all()
-    entries = db.query(EntryModel).all()
-    payments = db.query(PaymentModel).all()
-    expenses = db.query(ExpenseModel).all()
-
-    opening_balance_setting = db.query(SettingModel).filter(SettingModel.key == "opening_balance").first()
-    current_opening = float(opening_balance_setting.value) if opening_balance_setting and opening_balance_setting.value else 0.0
-
-    total_purchases = sum(e.total_amount or 0.0 for e in entries) + sum(i.total_amount or 0.0 for i in invoices if (i.invoice_type or "").upper() != "SALES")
-    total_revenue = sum(i.total_amount or 0.0 for i in invoices if (i.invoice_type or "").upper() == "SALES")
-    total_expenses = sum(e.amount or 0.0 for e in expenses)
-    total_collected = sum(p.amount or 0.0 for p in payments)
-    net_profit = total_revenue - (total_purchases + total_expenses)
-
-    rows = []
-    for shop in shops:
-        shop_invoices = [i for i in invoices if i.shop_id == shop.id]
-        shop_entries = [e for e in entries if e.shop_id == shop.id]
-        shop_payments = [p for p in payments if p.shop_id == shop.id]
-        
-        invoiced = sum(i.total_amount or 0.0 for i in shop_invoices)
-        purchase_amt = sum(e.total_amount or 0.0 for e in shop_entries)
-        paid = sum(p.amount or 0.0 for p in shop_payments)
-        
-        latest_inv = shop_invoices[0] if shop_invoices else None
-        latest_entry = shop_entries[0] if shop_entries else None
-        
-        date_str = datetime.datetime.utcnow().strftime("%Y-%m-%d")
-        if latest_inv and latest_inv.invoice_date:
-            date_str = latest_inv.invoice_date.isoformat()[:10]
-        elif latest_entry and latest_entry.entry_date:
-            date_str = latest_entry.entry_date.isoformat()[:10]
-
-        rows.append({
-            "shop_id": shop.id,
-            "date": date_str,
-            "shop_no": shop.shop_no,
-            "name": shop.name,
-            "location": shop.location or shop.district or "Tamil Nadu",
-            "purchase_amount": float(purchase_amt),
-            "invoiced": float(invoiced),
-            "paid": float(paid)
-        })
-
-    return {
-        "global_opening_balance": float(current_opening),
-        "total_revenue": float(total_revenue),
-        "total_purchases": float(total_purchases),
-        "total_expenses": float(total_expenses),
-        "net_profit": float(net_profit),
-        "total_collected": float(total_collected),
-        "total_outstanding": float(max(0.0, current_opening - total_purchases)),
-        "rows": rows
-    }
+    db.commit()
+    return {"message": "Invoice created successfully", "id": new_inv.id, "invoice_no": new_inv.invoice_no}
 
 
-# --- WASTE ANALYTICS ENDPOINTS ---
+@app.put("/api/invoices/{invoice_id}")
+@app.put("/invoices/{invoice_id}")
+def update_invoice(invoice_id: int, payload: InvoiceCreate, db: Session = Depends(get_db)):
+    inv = db.query(InvoiceModel).filter(InvoiceModel.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
 
-@app.get("/api/analytics/waste")
-@app.get("/analytics/waste")
-@app.get("/api/waste-analytics")
-@app.get("/waste-analytics")
-def get_waste_analytics(db: Session = Depends(get_db)):
-    entries = db.query(EntryModel).all()
-    total_boxes = sum(e.quantity or 0 for e in entries)
-    total_waste = sum(e.waste_kg or 0.0 for e in entries)
+    if payload.party_name:
+        inv.party_name = payload.party_name
+        inv.customer_name = payload.party_name
+    if payload.location:
+        inv.address = payload.location
+    if payload.supervisor:
+        inv.supervisor = payload.supervisor
+    if payload.contact:
+        inv.mobile = payload.contact
+    if payload.taxable_amount is not None:
+        inv.taxable_amount = payload.taxable_amount
+    if payload.total_amount is not None:
+        inv.total_amount = payload.total_amount
+    if payload.waste_kg is not None:
+        inv.waste_kg = payload.waste_kg
 
-    shops = db.query(ShopModel).all()
-    shop_map = {s.id: s for s in shops}
+    db.query(InvoiceItemModel).filter(InvoiceItemModel.invoice_id == invoice_id).delete()
+    for item in payload.items:
+        new_item = InvoiceItemModel(
+            invoice_id=inv.id,
+            description=item.description,
+            quantity=item.quantity,
+            rate=item.rate,
+            amount=item.amount or (item.quantity * item.rate)
+        )
+        db.add(new_item)
 
-    breakdown_dict = {}
-    for e in entries:
-        shop_id = e.shop_id
-        if shop_id not in breakdown_dict:
-            shop = shop_map.get(shop_id)
-            breakdown_dict[shop_id] = {
-                "shop_id": shop_id,
-                "shop_no": shop.shop_no if shop else "—",
-                "shop_name": shop.name if shop else "—",
-                "total_boxes": 0,
-                "total_waste_kg": 0.0
-            }
-        breakdown_dict[shop_id]["total_boxes"] += (e.quantity or 0)
-        breakdown_dict[shop_id]["total_waste_kg"] += float(e.waste_kg or 0.0)
+    db.commit()
+    return {"message": "Invoice updated successfully", "id": inv.id}
 
-    breakdown_list = list(breakdown_dict.values())
 
-    return {
-        "total_boxes": int(total_boxes),
-        "total_waste_kg": float(total_waste),
-        "breakdown": breakdown_list,
-        "by_shop": breakdown_list
-    }
+@app.delete("/api/invoices/{invoice_id}")
+@app.delete("/invoices/{invoice_id}")
+def delete_invoice(invoice_id: int, db: Session = Depends(get_db)):
+    inv = db.query(InvoiceModel).filter(InvoiceModel.id == invoice_id).first()
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    db.delete(inv)
+    db.commit()
+    return {"message": "Invoice deleted successfully"}
 
 if __name__ == "__main__":
     import uvicorn

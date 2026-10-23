@@ -5,7 +5,7 @@ import { PageHeader, Card } from "@/components/Shell";
 import Pager from "@/components/Pager";
 import { inr, fmtDate, exportToCsv } from "@/lib/helpers";
 import { toast } from "sonner";
-import { Receipt, Plus, Download, Search, Eye, Edit, Trash2, X, Wallet, Building2, Phone, MapPin, IndianRupee, Scale } from "lucide-react";
+import { Receipt, Plus, Download, Search, Eye, Edit, Trash2, X, Wallet, Building2, Phone, MapPin, IndianRupee, Scale, Printer, ArrowLeft } from "lucide-react";
 import { BOX_TYPES } from "@/lib/boxTypes";
 
 const PAGE_SIZE = 10;
@@ -18,14 +18,27 @@ const STATUS = {
 const BRANDY_BOX_WEIGHT = 0.420; // 420g
 const BEER_BOX_WEIGHT = 0.220;   // 220g
 
-const blankItem = () => ({ description: BOX_TYPES[0] || "Brandy Box (420g)", hsn: "4819", unit: "PCS", quantity: 1, rate: 16 });
+const blankItem = () => ({ description: BOX_TYPES[0] || "Brandy Box (420g)", unit: "PCS", quantity: 1, rate: "" });
 
-const generateInvoiceNo = () => {
-  const d = new Date();
-  const dateStr = d.toISOString().slice(0, 10).replace(/-/g, "");
-  const rand = Math.floor(1000 + Math.random() * 9000);
-  return `INV-${dateStr}-${rand}`;
-};
+// Utility to convert numbers to Indian Rupee Words
+function numberToWords(num) {
+  if (!num) return "Zero Rupees Only";
+  const a = ['', 'One ', 'Two ', 'Three ', 'Four ', 'Five ', 'Six ', 'Seven ', 'Eight ', 'Nine ', 'Ten ', 'Eleven ', 'Twelve ', 'Thirteen ', 'Fourteen ', 'Fifteen ', 'Sixteen ', 'Seventeen ', 'Eighteen ', 'Nineteen '];
+  const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+
+  function inWords(n) {
+    if ((n = n.toString()).length > 9) return 'overflow';
+    let n_arr = ('000000000' + n).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
+    if (!n_arr) return '';
+    let str = '';
+    str += (n_arr[1] != 0) ? (a[Number(n_arr[1])] || b[n_arr[1][0]] + ' ' + a[n_arr[1][1]]) + 'Lakh ' : '';
+    str += (n_arr[2] != 0) ? (a[Number(n_arr[2])] || b[n_arr[2][0]] + ' ' + a[n_arr[2][1]]) + 'Thousand ' : '';
+    str += (n_arr[3] != 0) ? (a[Number(n_arr[3])] || b[n_arr[3][0]] + ' ' + a[n_arr[3][1]]) + 'Hundred ' : '';
+    str += (n_arr[4] != 0) ? ((str != '') ? 'and ' : '') + (a[Number(n_arr[4])] || b[n_arr[4][0]] + ' ' + a[n_arr[4][1]]) : '';
+    return str;
+  }
+  return inWords(Math.round(num)).trim() + " Rupees Only";
+}
 
 export default function Invoices() {
   const navigate = useNavigate();
@@ -34,7 +47,7 @@ export default function Invoices() {
   const [settings, setSettings] = useState(null);
   const [activeTab, setActiveTab] = useState("invoices");
 
-  const [canManage] = useState(localStorage.getItem("auro_can_edit") === "true");
+  const [canManage] = useState(true);
 
   const [search, setSearch] = useState("");
   const [fromMonth, setFromMonth] = useState("");
@@ -44,17 +57,25 @@ export default function Invoices() {
   const [saving, setSaving] = useState(false);
   const [editId, setEditId] = useState(null);
 
+  // View Modal State
+  const [viewModal, setViewModal] = useState(false);
+  const [selectedInvoice, setSelectedInvoice] = useState(null);
+
   const [location, setLocation] = useState("");
   const [supervisor, setSupervisor] = useState("");
   const [contact, setContact] = useState("");
 
-  const [invoiceNo, setInvoiceNo] = useState("");
+  const [invoiceNo, setInvoiceNo] = useState("AP-INV-00001");
   const [shopId, setShopId] = useState("");
   const [partyName, setPartyName] = useState("");
   const [invDate, setInvDate] = useState(new Date().toISOString().slice(0, 10));
   const [truckNo, setTruckNo] = useState("");
   const [totalWeight, setTotalWeight] = useState("");
   const [items, setItems] = useState([blankItem()]);
+
+  // Waste Rates
+  const [beerWasteRate, setBeerWasteRate] = useState("");
+  const [brandyWasteRate, setBrandyWasteRate] = useState("");
 
   const safeExtractArray = (res) => {
     if (Array.isArray(res?.data)) return res.data;
@@ -90,59 +111,34 @@ export default function Invoices() {
   useEffect(() => {
     api.get("/settings").then((r) => {
       setSettings(r.data);
-      const defaultRate = Number(r.data?.rate_beer || r.data?.default_rate || 16);
-      setItems([{ ...blankItem(), rate: defaultRate }]);
+      setItems([{ ...blankItem(), rate: "" }]);
     }).catch(() => {});
   }, []);
 
-  const rateFor = (type) => {
-    const t = (type || "").toLowerCase();
-    if (t.includes("beer")) return Number(settings?.rate_beer ?? settings?.default_rate ?? 16);
-    if (t.includes("brandy")) return Number(settings?.rate_brandy ?? settings?.default_rate ?? 16);
-    return Number(settings?.default_rate ?? 16);
-  };
-
   // AUTO-FETCH COTTON BOX ENTRY DATA WHEN DATE OR SHOP CHANGES IN MODAL
   useEffect(() => {
-    if (modal && invDate) {
+    if (modal && invDate && !editId) {
       api.get("/entries", { params: { date: invDate, shop_id: shopId || undefined } })
         .then((res) => {
           const entryList = safeExtractArray(res);
           if (entryList.length > 0) {
-            // Aggregate brandy and beer quantities from matching entries on this date
             let totalBrandy = 0;
             let totalBeer = 0;
             
             entryList.forEach((e) => {
               totalBrandy += Number(e.brandy_qty || 0);
               totalBeer += Number(e.beer_qty || 0);
-              // Fallback if legacy single quantity field used
               if (!e.brandy_qty && !e.beer_qty && e.quantity) {
                 totalBrandy += Number(e.quantity);
               }
             });
 
             const newItems = [];
-            const brandyRate = rateFor("Brandy Box");
-            const beerRate = rateFor("Beer Box");
-
-            if (totalBrandy > 0) {
-              newItems.push({
-                description: "Brandy Cotton Box (420g)",
-                hsn: "4819",
-                unit: "PCS",
-                quantity: totalBrandy,
-                rate: brandyRate
-              });
-            }
             if (totalBeer > 0) {
-              newItems.push({
-                description: "Beer Bottle Cotton Box (220g)",
-                hsn: "4819",
-                unit: "PCS",
-                quantity: totalBeer,
-                rate: beerRate
-              });
+              newItems.push({ description: "Beer Bottle Cotton Box (220g)", unit: "PCS", quantity: totalBeer, rate: "" });
+            }
+            if (totalBrandy > 0) {
+              newItems.push({ description: "Brandy Cotton Box (420g)", unit: "PCS", quantity: totalBrandy, rate: "" });
             }
 
             if (newItems.length > 0) {
@@ -153,92 +149,73 @@ export default function Invoices() {
         })
         .catch(() => {});
     }
-  }, [invDate, shopId, modal]);
+  }, [invDate, shopId, modal, editId]);
 
   const safeInvoices = Array.isArray(invoices) ? invoices : [];
   const pageCount = Math.max(1, Math.ceil(safeInvoices.length / PAGE_SIZE));
   const rows = useMemo(() => safeInvoices.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [safeInvoices, page]);
-
   const companyList = useMemo(() => companies, [companies]);
 
-  const summary = useMemo(() => {
-    const totalSales = safeInvoices.reduce((acc, i) => acc + (Number(i.total_amount) || 0), 0);
-    const totalPaid = safeInvoices.reduce((acc, i) => acc + (Number(i.amount_paid) || 0), 0);
-    const totalBalance = totalSales - totalPaid;
-    const uniqueCompanies = companyList.length;
+  // Waste Calculations
+  const wasteSummary = useMemo(() => {
+    let beerWeight = 0;
+    let beerQty = 0;
+    let brandyWeight = 0;
+    let brandyQty = 0;
 
-    const totalBrandyWaste = safeInvoices.reduce((acc, i) => {
-      const waste = i.waste_kg !== undefined && i.waste_kg !== null 
-        ? Number(i.waste_kg) 
-        : (Array.isArray(i.items) ? i.items : []).reduce((sum, item) => {
-            const desc = (item.description || "").toLowerCase();
-            if (desc.includes("brandy")) {
-              return sum + (Number(item.quantity || 0) * BRANDY_BOX_WEIGHT);
-            }
-            return sum;
-          }, 0);
-      return acc + waste;
-    }, 0);
-
-    return { totalSales, totalPaid, totalBalance, uniqueCompanies, totalBrandyWaste };
-  }, [safeInvoices, companyList]);
-
-  const calculatedWasteKg = useMemo(() => {
-    return items.reduce((acc, it) => {
-      const desc = (it.description || "").toLowerCase();
-      const qty = Number(it.quantity || 0);
-      if (desc.includes("brandy")) {
-        return acc + (qty * BRANDY_BOX_WEIGHT);
-      }
-      return acc;
-    }, 0);
-  }, [items]);
-
-  useEffect(() => {
-    let weightSum = 0;
     items.forEach((it) => {
       const desc = (it.description || "").toLowerCase();
       const qty = Number(it.quantity || 0);
-      if (desc.includes("brandy")) {
-        weightSum += qty * BRANDY_BOX_WEIGHT;
-      } else if (desc.includes("beer")) {
-        weightSum += qty * BEER_BOX_WEIGHT;
+      if (desc.includes("beer")) {
+        beerQty += qty;
+        beerWeight += qty * BEER_BOX_WEIGHT;
+      } else if (desc.includes("brandy")) {
+        brandyQty += qty;
+        brandyWeight += qty * BRANDY_BOX_WEIGHT;
       }
     });
-    if (weightSum > 0) {
-      setTotalWeight(weightSum.toFixed(2));
-    }
+
+    return { beerQty, beerWeight, brandyQty, brandyWeight, totalWeight: beerWeight + brandyWeight };
   }, [items]);
 
-  const grossTaxable = items.reduce((s, it) => s + (Number(it.quantity || 0) * Number(it.rate || 0)), 0);
-  const wasteDeductionVal = items.reduce((s, it) => {
-    const desc = (it.description || "").toLowerCase();
-    if (desc.includes("brandy")) {
-      return s + (Number(it.quantity || 0) * BRANDY_BOX_WEIGHT * Number(it.rate || 0));
+  useEffect(() => {
+    if (wasteSummary.totalWeight > 0) {
+      setTotalWeight(wasteSummary.totalWeight.toFixed(2));
     }
-    return s;
-  }, 0);
+  }, [wasteSummary]);
 
-  const taxable = Math.max(0, grossTaxable - wasteDeductionVal);
+  // Gross, Waste Addition, Net Taxable & GST
+  const grossTaxable = items.reduce((s, it) => s + (Number(it.quantity || 0) * Number(it.rate || 0)), 0);
+  
+  const beerWasteValue = wasteSummary.beerQty * Number(beerWasteRate || 0);
+  const brandyWasteValue = wasteSummary.brandyQty * Number(brandyWasteRate || 0);
+  const totalWasteValue = beerWasteValue + brandyWasteValue;
+
+  const taxable = grossTaxable + totalWasteValue;
   const cgp = settings?.cgst_percent || 2.5, sgp = settings?.sgst_percent || 2.5;
   const cgst = taxable * cgp / 100, sgst = taxable * sgp / 100;
   const total = Math.round(taxable + cgst + sgst);
 
-  const setItem = (i, k, v) => setItems((arr) => arr.map((it, idx) => idx === i ? { ...it, [k]: k === 'quantity' || k === 'rate' ? (v === '' ? '' : Number(v)) : v } : it));
-  const addItem = () => setItems((arr) => [...arr, { ...blankItem(), rate: Number(settings?.rate_beer || settings?.default_rate || 16) }]);
+  const addItem = () => setItems((arr) => [...arr, { ...blankItem(), rate: "" }]);
   const removeItem = (i) => setItems((arr) => arr.length === 1 ? arr : arr.filter((_, idx) => idx !== i));
 
-  const handleViewInvoice = (inv) => {
+  const handleViewInvoice = async (inv) => {
     const targetId = inv.id || inv._id || inv.invoice_id;
     if (!targetId) {
       toast.error("Invalid invoice reference ID");
       return;
     }
-    navigate(`/invoices/${targetId}`);
+    try {
+      const res = await api.get(`/invoices/${targetId}`);
+      setSelectedInvoice(res.data);
+      setViewModal(true);
+    } catch {
+      setSelectedInvoice(inv);
+      setViewModal(true);
+    }
   };
 
   const handleDeleteInvoice = async (inv) => {
-    if (!canManage) { toast.error("Unauthorized: Only admins can delete invoices"); return; }
     const targetId = inv.id || inv._id || inv.invoice_id;
     if (!targetId) { toast.error("Invalid invoice ID"); return; }
 
@@ -255,7 +232,6 @@ export default function Invoices() {
 
   const handleOpenCreate = () => {
     setEditId(null);
-    setInvoiceNo(generateInvoiceNo());
     setShopId("");
     setPartyName("");
     setLocation("");
@@ -264,20 +240,37 @@ export default function Invoices() {
     setInvDate(new Date().toISOString().slice(0, 10));
     setTruckNo("");
     setTotalWeight("");
-    setItems([{ ...blankItem(), rate: Number(settings?.default_rate || 16) }]);
+    setBeerWasteRate("");
+    setBrandyWasteRate("");
+    setItems([{ ...blankItem(), rate: "" }]);
+
+    if (safeInvoices.length > 0) {
+      let maxNum = 0;
+      safeInvoices.forEach(inv => {
+        const parts = (inv.invoice_no || "").split("-");
+        const lastPart = parts[parts.length - 1];
+        if (!isNaN(lastPart)) {
+          const num = parseInt(lastPart, 10);
+          if (num > maxNum) maxNum = num;
+        }
+      });
+      setInvoiceNo(`AP-INV-${String(maxNum + 1).padStart(5, '0')}`);
+    } else {
+      setInvoiceNo("AP-INV-00001");
+    }
+
     setModal(true);
   };
 
   const handleOpenEdit = (inv) => {
-    if (!canManage) { toast.error("Unauthorized: Only admins can edit invoices"); return; }
     const targetId = inv.id || inv._id;
     setEditId(targetId);
-    setInvoiceNo(inv.invoice_no || "");
+    setInvoiceNo(inv.invoice_no || "AP-INV-00001");
     setShopId(inv.shop_id || inv.shopId || "");
     setPartyName(inv.party_name || inv.customer_name || "");
-    setLocation(inv.location || "");
+    setLocation(inv.location || inv.address || "");
     setSupervisor(inv.supervisor || "");
-    setContact(inv.contact || "");
+    setContact(inv.contact || inv.mobile || "");
     setTruckNo(inv.truck_no || "");
     setTotalWeight(inv.total_weight || "");
 
@@ -286,13 +279,12 @@ export default function Invoices() {
     if (inv.items && inv.items.length > 0) {
       setItems(inv.items.map(it => ({
         description: it.description || BOX_TYPES[0],
-        hsn: it.hsn || "4819",
         unit: it.unit || "PCS",
         quantity: it.quantity || 1,
-        rate: it.rate || 16
+        rate: it.rate || ""
       })));
     } else {
-      setItems([{ ...blankItem(), rate: Number(settings?.default_rate || 16) }]);
+      setItems([{ ...blankItem(), rate: "" }]);
     }
 
     setModal(true);
@@ -300,22 +292,21 @@ export default function Invoices() {
 
   const saveInvoice = async (e) => {
     e.preventDefault();
-    if (!canManage && editId) { toast.error("Unauthorized: Only admins can edit invoices"); return; }
     if (!partyName) { toast.error("Enter Party / Company Name"); return; }
 
     const clean = items.filter((it) => it.quantity !== "" && it.rate !== "").map((it) => ({
-      ...it,
+      description: it.description,
       quantity: Number(it.quantity),
       rate: Number(it.rate),
       amount: Number(it.quantity) * Number(it.rate)
     }));
 
-    if (clean.length === 0) { toast.error("Add at least one line item"); return; }
+    if (clean.length === 0) { toast.error("Add at least one line item with rate"); return; }
 
     setSaving(true);
     try {
       const payload = {
-        invoice_no: invoiceNo || generateInvoiceNo(),
+        invoice_no: invoiceNo || "AP-INV-00001",
         shop_id: shopId ? Number(shopId) : null,
         party_name: partyName,
         customer_name: partyName,
@@ -326,21 +317,18 @@ export default function Invoices() {
         invoice_type: "SALES",
         truck_no: truckNo,
         total_weight: totalWeight ? Number(totalWeight) : null,
-        waste_kg: Number(calculatedWasteKg.toFixed(2)),
+        waste_kg: Number(wasteSummary.totalWeight.toFixed(2)),
         items: clean,
-        cgst_percent: cgp,
-        sgst_percent: sgp,
         taxable_amount: taxable,
         total_amount: total,
-        tax_amount: cgst + sgst,
       };
 
       if (editId) {
         await api.put(`/invoices/${editId}`, payload);
         toast.success("Sale Invoice updated successfully");
       } else {
-        const res = await api.post("/invoices", payload);
-        toast.success(`Sale Invoice ${res.data.invoice_no || 'Created'} created`);
+        await api.post("/invoices", payload);
+        toast.success(`Sale Invoice created successfully`);
       }
       setModal(false);
       load();
@@ -349,6 +337,165 @@ export default function Invoices() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const handlePrint = () => {
+    window.print();
+  };
+
+  // Helper Component for Single A4 Invoice Copy with Watermark
+  const SingleA4InvoiceBill = ({ copyTitle }) => {
+    const rawItems = selectedInvoice?.items || [];
+    let beerItem = rawItems.find(i => i.description.toLowerCase().includes("beer")) || { description: "Beer Bottle Cotton Box (220g)", quantity: 0, rate: 0, amount: 0 };
+    let brandyItem = rawItems.find(i => i.description.toLowerCase().includes("brandy")) || { description: "Brandy Cotton Box (420g)", quantity: 0, rate: 0, amount: 0 };
+
+    const beerQty = Number(beerItem.quantity || 0);
+    const brandyQty = Number(brandyItem.quantity || 0);
+
+    const beerWasteWeight = (beerQty * BEER_BOX_WEIGHT).toFixed(2);
+    const brandyWasteWeight = (brandyQty * BRANDY_BOX_WEIGHT).toFixed(2);
+
+    const displayRows = [
+      { id: 1, desc: "Beer Bottle Cotton Box (220g)", hsn: "4819", qty: beerQty, unit: "PCS", rate: beerItem.rate || 0, amount: beerQty * (beerItem.rate || 0) },
+      { id: 2, desc: "Brandy Cotton Box (420g)", hsn: "4819", qty: brandyQty, unit: "PCS", rate: brandyItem.rate || 0, amount: brandyQty * (brandyItem.rate || 0) },
+      { id: 3, desc: `Beer Bottle Cotton Box Waste (${beerWasteWeight} kg)`, hsn: "4819", qty: beerQty, unit: "PCS", rate: beerWasteRate || 0, amount: beerQty * (Number(beerWasteRate) || 0) },
+      { id: 4, desc: `Brandy Bottle Cotton Box Waste (${brandyWasteWeight} kg)`, hsn: "4819", qty: brandyQty, unit: "PCS", rate: brandyWasteRate || 0, amount: brandyQty * (Number(brandyWasteRate) || 0) },
+    ];
+
+    const grossValue = displayRows.reduce((s, x) => s + x.amount, 0);
+    const netTaxable = grossValue;
+    const cgstVal = netTaxable * 0.025;
+    const sgstVal = netTaxable * 0.025;
+    const totalPayable = Math.round(netTaxable + cgstVal + sgstVal);
+
+    return (
+      <div className="relative border-2 border-slate-900 p-8 text-slate-900 bg-white shadow-md mx-auto w-full max-w-[210mm] min-h-[297mm] flex flex-col justify-between print-page-break print:shadow-none print:border-2 print:m-0">
+        
+        {/* BACKGROUND WATERMARK LOGO */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-5 z-0 select-none">
+          <div className="text-center transform -rotate-12">
+            <div className="w-72 h-72 rounded-full border-[12px] border-slate-900 flex items-center justify-center mx-auto mb-2">
+              <span className="text-8xl font-black tracking-tighter text-slate-900">AP</span>
+            </div>
+            <p className="text-5xl font-black uppercase tracking-widest text-slate-900">AURO PRODUCTS</p>
+          </div>
+        </div>
+
+        {/* INVOICE CONTENT OVER WATERMARK */}
+        <div className="relative z-10 flex-1 flex flex-col justify-between">
+          <div>
+            {/* Header Company Logo Section */}
+            <div className="flex justify-between items-center border-b-2 border-slate-900 pb-4 mb-4">
+              <div className="flex items-center gap-4">
+                <div className="w-16 h-16 rounded-full bg-slate-900 text-white flex items-center justify-center font-black text-xl border-2 border-red-600 shrink-0">
+                  AP
+                </div>
+                <div>
+                  <h1 className="text-3xl font-black tracking-wide text-slate-900 uppercase">AURO PRODUCTS</h1>
+                  <p className="text-xs font-semibold text-slate-700">Industrial Area, Tamil Nadu</p>
+                  <p className="text-xs font-mono text-slate-800"><span className="font-bold">GSTIN:</span> 33AAAAA0000A1Z5 | <span className="font-bold">State:</span> Tamil Nadu (33)</p>
+                </div>
+              </div>
+              <div className="text-right">
+                <span className="inline-block px-3 py-1 bg-slate-100 border border-slate-900 text-slate-900 font-black text-xs uppercase tracking-wider">
+                  TAX INVOICE ({copyTitle})
+                </span>
+              </div>
+            </div>
+
+            {/* Invoice & Bill To Info Grid */}
+            <div className="grid grid-cols-2 gap-4 border-2 border-slate-900 p-3 mb-4 text-xs bg-slate-50/50">
+              <div className="space-y-1">
+                <p><span className="font-bold">Invoice No:</span> <span className="font-mono font-bold text-slate-900">{selectedInvoice.invoice_no}</span></p>
+                <p><span className="font-bold">Invoice Date:</span> {fmtDate(selectedInvoice.invoice_date)}</p>
+                <p><span className="font-bold">Place of Supply:</span> Tamil Nadu (33)</p>
+                <p><span className="font-bold">Total Weight:</span> <span className="font-semibold">{Number(selectedInvoice.waste_kg || 0).toFixed(2)} kg</span></p>
+              </div>
+              <div className="space-y-1 border-l-2 pl-4 border-slate-300">
+                <p className="font-bold text-slate-900 underline uppercase text-[11px]">Bill To (Party / Company):</p>
+                <p className="font-bold text-sm text-slate-900">{selectedInvoice.party_name || selectedInvoice.customer_name}</p>
+                <p><span className="font-bold">Address/Location:</span> {selectedInvoice.location || selectedInvoice.address || "—"}</p>
+                <p><span className="font-bold">Contact:</span> {selectedInvoice.contact || selectedInvoice.mobile || "—"}</p>
+                <p><span className="font-bold">Supervisor:</span> {selectedInvoice.supervisor || "—"}</p>
+              </div>
+            </div>
+
+            {/* 4 Line Items Table */}
+            <table className="w-full border-2 border-slate-900 text-xs border-collapse mb-4">
+              <thead>
+                <tr className="bg-slate-200 border-b-2 border-slate-900 font-bold text-slate-900">
+                  <th className="border-r border-slate-900 p-2 text-center w-8">#</th>
+                  <th className="border-r border-slate-900 p-2 text-left">Description of Goods</th>
+                  <th className="border-r border-slate-900 p-2 text-center w-16">HSN</th>
+                  <th className="border-r border-slate-900 p-2 text-center w-16">Qty</th>
+                  <th className="border-r border-slate-900 p-2 text-center w-14">Unit</th>
+                  <th className="border-r border-slate-900 p-2 text-right w-20">Rate</th>
+                  <th className="p-2 text-right w-24">Amount (₹)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-300 font-medium">
+                {displayRows.map((r) => (
+                  <tr key={r.id}>
+                    <td className="border-r border-slate-900 p-2 text-center font-mono">{r.id}</td>
+                    <td className="border-r border-slate-900 p-2 font-semibold text-slate-900">{r.desc}</td>
+                    <td className="border-r border-slate-900 p-2 text-center font-mono">{r.hsn}</td>
+                    <td className="border-r border-slate-900 p-2 text-center font-mono">{r.qty}</td>
+                    <td className="border-r border-slate-900 p-2 text-center uppercase">{r.unit}</td>
+                    <td className="border-r border-slate-900 p-2 text-right font-mono">{Number(r.rate).toFixed(2)}</td>
+                    <td className="p-2 text-right font-mono font-bold">{r.amount.toFixed(2)}</td>
+                  </tr>
+                ))}
+                
+                <tr className="border-t-2 border-slate-900 bg-slate-50 font-bold">
+                  <td colSpan={6} className="border-r border-slate-900 p-2 text-right">Gross Item Value</td>
+                  <td className="p-2 text-right font-mono">₹{grossValue.toFixed(2)}</td>
+                </tr>
+
+                <tr className="border-t border-slate-900 font-bold bg-slate-100">
+                  <td colSpan={6} className="border-r border-slate-900 p-2 text-right">Net Taxable Value</td>
+                  <td className="p-2 text-right font-mono">₹{netTaxable.toFixed(2)}</td>
+                </tr>
+
+                <tr>
+                  <td colSpan={6} className="border-r border-slate-900 p-2 text-right font-medium text-slate-700">CGST @ 2.5%</td>
+                  <td className="p-2 text-right font-mono text-slate-800">₹{cgstVal.toFixed(2)}</td>
+                </tr>
+
+                <tr>
+                  <td colSpan={6} className="border-r border-slate-900 p-2 text-right font-medium text-slate-700">SGST @ 2.5%</td>
+                  <td className="p-2 text-right font-mono text-slate-800">₹{sgstVal.toFixed(2)}</td>
+                </tr>
+
+                <tr className="border-t-2 border-slate-900 bg-slate-200 font-black text-sm">
+                  <td colSpan={6} className="border-r border-slate-900 p-2.5 text-right uppercase tracking-wider">Total Amount Payable</td>
+                  <td className="p-2.5 text-right font-mono text-slate-900">₹{totalPayable.toFixed(2)}</td>
+                </tr>
+              </tbody>
+            </table>
+
+            {/* Amount in Words Footer */}
+            <div className="border-2 border-slate-900 p-3 text-xs font-semibold bg-slate-50 mb-4">
+              <span className="font-bold text-slate-900">Amount in Words: </span>
+              <span className="italic text-slate-800">{numberToWords(totalPayable)}</span>
+            </div>
+          </div>
+
+          {/* Bank Details & Signature Footer */}
+          <div className="grid grid-cols-2 gap-4 border-2 border-slate-900 p-3 text-xs bg-white">
+            <div className="space-y-1">
+              <p className="font-bold text-slate-900 underline uppercase">Bank Account Details:</p>
+              <p><span className="font-semibold">Bank Name:</span> State Bank of India</p>
+              <p><span className="font-semibold">A/C No:</span> 38901234567</p>
+              <p><span className="font-semibold">IFSC Code:</span> SBIN0001234</p>
+            </div>
+            <div className="flex flex-col justify-between text-right pl-4 border-l border-slate-300">
+              <p className="font-bold text-slate-900 uppercase">For Auro Products</p>
+              <p className="font-bold text-slate-800 pt-8">(Authorized Signatory)</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -368,7 +515,7 @@ export default function Invoices() {
           <div className="p-2.5 rounded-xl bg-cyan-500/20 text-cyan-400 shrink-0"><Building2 className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Companies</p>
-            <p className="text-lg font-bold font-mono text-cyan-300">{summary.uniqueCompanies}</p>
+            <p className="text-lg font-bold font-mono text-cyan-300">{companyList.length}</p>
           </div>
         </Card>
 
@@ -376,7 +523,7 @@ export default function Invoices() {
           <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 shrink-0"><IndianRupee className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Sales</p>
-            <p className="text-lg font-bold font-mono text-emerald-300">{inr(summary.totalSales)}</p>
+            <p className="text-lg font-bold font-mono text-emerald-300">{inr(safeInvoices.reduce((a, c) => a + (Number(c.total_amount) || 0), 0))}</p>
           </div>
         </Card>
 
@@ -384,7 +531,7 @@ export default function Invoices() {
           <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 shrink-0"><Wallet className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Paid</p>
-            <p className="text-lg font-bold font-mono text-amber-300">{inr(summary.totalPaid)}</p>
+            <p className="text-lg font-bold font-mono text-amber-300">{inr(safeInvoices.reduce((a, c) => a + (Number(c.amount_paid) || 0), 0))}</p>
           </div>
         </Card>
 
@@ -392,15 +539,17 @@ export default function Invoices() {
           <div className="p-2.5 rounded-xl bg-red-500/20 text-red-400 shrink-0"><Receipt className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Outstanding</p>
-            <p className="text-lg font-bold font-mono text-red-300">{inr(summary.totalBalance)}</p>
+            <p className="text-lg font-bold font-mono text-red-300">{inr(safeInvoices.reduce((a, c) => a + ((Number(c.total_amount) || 0) - (Number(c.amount_paid) || 0)), 0))}</p>
           </div>
         </Card>
 
         <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-purple-500/10 to-indigo-500/5 border-purple-500/25 sm:col-span-2 xl:col-span-1">
           <div className="p-2.5 rounded-xl bg-purple-500/20 text-purple-400 shrink-0"><Scale className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
-            <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Brandy Waste</p>
-            <p className="text-lg font-bold font-mono text-purple-300">{summary.totalBrandyWaste.toFixed(2)} kg</p>
+            <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Weight</p>
+            <p className="text-lg font-bold font-mono text-purple-300">
+              {safeInvoices.reduce((acc, i) => acc + (Number(i.waste_kg) || 0), 0).toFixed(2)} kg
+            </p>
           </div>
         </Card>
       </div>
@@ -440,7 +589,7 @@ export default function Invoices() {
                     <th className="p-4">Date</th>
                     <th className="p-4">Party / Company Name</th>
                     <th className="p-4">Mobile & Address</th>
-                    <th className="p-4 text-center">Brandy Waste</th>
+                    <th className="p-4 text-center">Total Weight</th>
                     <th className="p-4 text-right">Taxable Amount</th>
                     <th className="p-4 text-right">Total Amount</th>
                     <th className="p-4 text-center">Status</th>
@@ -449,15 +598,7 @@ export default function Invoices() {
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {rows.map((i) => {
-                    const brandyWaste = i.waste_kg !== undefined && i.waste_kg !== null 
-                      ? Number(i.waste_kg) 
-                      : (Array.isArray(i.items) ? i.items : []).reduce((sum, item) => {
-                          const desc = (item.description || "").toLowerCase();
-                          if (desc.includes("brandy")) {
-                            return sum + (Number(item.quantity || 0) * BRANDY_BOX_WEIGHT);
-                          }
-                          return sum;
-                        }, 0);
+                    const totalWaste = Number(i.waste_kg || 0);
 
                     return (
                       <tr key={i.id || i._id} className="hover:bg-white/5 transition-colors">
@@ -473,7 +614,7 @@ export default function Invoices() {
                           {!i.contact && !i.location && <span className="text-slate-500">-</span>}
                         </td>
                         <td className="p-4 text-center font-mono text-amber-400 font-semibold">
-                          {brandyWaste > 0 ? `${brandyWaste.toFixed(2)} kg` : "-"}
+                          {totalWaste > 0 ? `${totalWaste.toFixed(2)} kg` : "-"}
                         </td>
                         <td className="p-4 text-right font-mono">{inr(i.taxable_amount)}</td>
                         <td className="p-4 text-right font-mono">{inr(i.total_amount ?? i.grand_total)}</td>
@@ -481,12 +622,8 @@ export default function Invoices() {
                         <td className="p-4">
                           <div className="flex items-center justify-end gap-1.5">
                             <button onClick={() => handleViewInvoice(i)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-cyan-300 transition" title="View Invoice"><Eye className="h-4 w-4" /></button>
-                            {canManage && (
-                              <>
-                                <button onClick={() => handleOpenEdit(i)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-amber-300 transition" title="Edit Invoice"><Edit className="h-4 w-4" /></button>
-                                <button onClick={() => handleDeleteInvoice(i)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-red-400 transition" title="Delete Invoice"><Trash2 className="h-4 w-4" /></button>
-                              </>
-                            )}
+                            <button onClick={() => handleOpenEdit(i)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-amber-300 transition" title="Edit Invoice"><Edit className="h-4 w-4" /></button>
+                            <button onClick={() => handleDeleteInvoice(i)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-red-400 transition" title="Delete Invoice"><Trash2 className="h-4 w-4" /></button>
                           </div>
                         </td>
                       </tr>
@@ -528,20 +665,48 @@ export default function Invoices() {
         </Card>
       )}
 
+      {/* PRINT PREVIEW MODAL WITH BACK & PRINT OPTIONS AND A4 COPIES */}
+      {viewModal && selectedInvoice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
+          <div className="relative w-full max-w-4xl bg-slate-100 text-slate-900 rounded-2xl shadow-2xl p-6 my-6 font-sans border border-slate-300 print:p-0 print:border-none print:shadow-none print:bg-white print:m-0 print:max-w-none">
+            
+            {/* Action Bar (Print & Back) - Hidden During Printing */}
+            <div className="flex justify-between items-center mb-6 print:hidden border-b pb-4 bg-white p-4 rounded-xl shadow-xs">
+              <button onClick={() => setViewModal(false)} className="flex items-center gap-2 px-4 py-2 bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl hover:bg-slate-300 transition">
+                <ArrowLeft className="h-4 w-4" /> Back to Invoices
+              </button>
+              <div className="flex items-center gap-3">
+                <button onClick={handlePrint} className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-cyan-600 to-emerald-600 text-white text-xs font-bold rounded-xl shadow-md hover:from-cyan-500 hover:to-emerald-500 transition">
+                  <Printer className="h-4 w-4" /> Print A4 Copies
+                </button>
+                <button onClick={() => setViewModal(false)} className="p-2 text-slate-400 hover:text-slate-800"><X className="h-5 w-5" /></button>
+              </div>
+            </div>
+
+            {/* A4 INVOICE COPIES WITH WATERMARK LOGO */}
+            <div className="print-single-page space-y-8 print:space-y-0">
+              <SingleA4InvoiceBill copyTitle="ORIGINAL FOR RECIPIENT" />
+              <SingleA4InvoiceBill copyTitle="DUPLICATE FOR TRANSPORTER" />
+              <SingleA4InvoiceBill copyTitle="TRIPLICATE FOR SUPPLIER" />
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* CREATE / EDIT MODAL */}
       {modal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setModal(false)} />
           <form onSubmit={saveInvoice} className="glass relative z-10 w-full max-w-2xl rounded-2xl p-6 max-h-[90vh] overflow-y-auto text-slate-800 bg-white shadow-xl border border-slate-200">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-display text-lg font-semibold text-slate-900">{editId ? "Edit Sale Invoice" : "New Sale Invoice (Auto-fetched by Date)"}</h3>
+              <h3 className="font-display text-lg font-semibold text-slate-900">{editId ? "Edit Sale Invoice" : "New Sale Invoice"}</h3>
               <button type="button" onClick={() => setModal(false)}><X className="h-5 w-5 text-slate-500 hover:text-slate-700" /></button>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <div>
                 <label className="text-xs text-slate-600 font-medium">Invoice No.</label>
-                <input type="text" required placeholder="INV-20261002-1234" value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)}
+                <input type="text" required placeholder="AP-INV-00001" value={invoiceNo} onChange={(e) => setInvoiceNo(e.target.value)}
                   className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 font-mono text-cyan-700 placeholder:text-slate-400" />
               </div>
               <div>
@@ -589,30 +754,28 @@ export default function Invoices() {
             </div>
             <div className="space-y-2">
               {items.map((it, i) => {
-                const isBrandy = (it.description || "").toLowerCase().includes("brandy");
                 const isBeer = (it.description || "").toLowerCase().includes("beer");
-                const perBoxWeight = isBrandy ? BRANDY_BOX_WEIGHT : isBeer ? BEER_BOX_WEIGHT : 0;
-                const perBoxRate = (perBoxWeight * Number(it.rate || 0)).toFixed(2);
+                const isBrandy = (it.description || "").toLowerCase().includes("brandy");
+                const perBoxWeight = isBeer ? BEER_BOX_WEIGHT : isBrandy ? BRANDY_BOX_WEIGHT : 0;
+                const calcWeight = (Number(it.quantity || 0) * perBoxWeight).toFixed(2);
 
                 return (
                   <div key={i} className="flex flex-col gap-1 border border-slate-200 p-2 rounded-lg bg-slate-50">
                     <div className="grid grid-cols-12 gap-2 items-center">
-                      <select value={BOX_TYPES.includes(it.description) ? it.description : ""} onChange={(e) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, description: e.target.value, rate: rateFor(e.target.value) } : x))}
-                        className="col-span-4 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500">
+                      <select value={BOX_TYPES.includes(it.description) ? it.description : ""} onChange={(e) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x))}
+                        className="col-span-5 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500">
                         {BOX_TYPES.map((t) => <option key={t} value={t} className="bg-white text-slate-800">{t}</option>)}
                       </select>
-                      <input value={it.hsn} onChange={(e) => setItems(arr => arr.map((x, idx) => idx === i ? { ...x, hsn: e.target.value } : x))} placeholder="HSN"
-                        className="col-span-2 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
                       <input type="number" min="1" value={it.quantity} onChange={(e) => setItems(arr => arr.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x))} placeholder="Box Qty"
-                        className="col-span-2 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
-                      <input type="number" step="0.01" value={it.rate} onChange={(e) => setItems(arr => arr.map((x, idx) => idx === i ? { ...x, rate: e.target.value } : x))} placeholder="Rate / KG"
+                        className="col-span-3 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
+                      <input type="number" step="0.01" value={it.rate} onChange={(e) => setItems(arr => arr.map((x, idx) => idx === i ? { ...x, rate: e.target.value } : x))} placeholder="Rate / Box (₹)"
                         className="col-span-3 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
                       <button type="button" onClick={() => removeItem(i)} className="col-span-1 p-2 text-red-500 hover:text-red-700 flex justify-center"><Trash2 className="h-4 w-4" /></button>
                     </div>
                     {perBoxWeight > 0 && (
                       <div className="text-[11px] text-cyan-700 font-medium px-1 flex justify-between">
+                        <span className="font-semibold">{calcWeight} kg ({it.quantity || 0} nos × {perBoxWeight} kg)</span>
                         <span>Default Weight: {perBoxWeight * 1000}g / box</span>
-                        <span>Rate per box: ₹{perBoxRate}</span>
                       </div>
                     )}
                   </div>
@@ -623,17 +786,64 @@ export default function Invoices() {
               </button>
             </div>
 
-            <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs space-y-1">
-              <div className="flex justify-between font-medium text-amber-900">
-                <span className="flex items-center gap-1"><Scale className="h-3.5 w-3.5 text-amber-600" /> Brandy Waste Deducted:</span>
-                <span className="font-bold">{calculatedWasteKg.toFixed(2)} kg</span>
+            {/* SEPARATE WASTE DEDUCTION ROWS FOR BEER & BRANDY */}
+            <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-3">
+              <div className="flex justify-between items-center font-medium text-amber-900 border-b border-amber-200/60 pb-1.5 text-xs">
+                <span className="flex items-center gap-1.5 font-bold"><Scale className="h-4 w-4 text-amber-600" /> Cotton Box Waste Additions:</span>
+                <span className="font-bold font-mono text-sm">{wasteSummary.totalWeight.toFixed(2)} kg</span>
               </div>
-              <p className="text-[11px] text-amber-700">Calculated strictly at 420g/box and deducted from taxable billing amount.</p>
+
+              {/* 1. Beer Bottle Cotton Box Waste Row */}
+              <div className="grid grid-cols-12 gap-2 items-center bg-white p-2.5 rounded-lg border border-amber-200/80 shadow-xs text-xs">
+                <div className="col-span-5 font-semibold text-slate-800">
+                  Beer Bottle Cotton Box Waste
+                  <span className="block text-[11px] font-mono text-cyan-700 font-medium">
+                    {wasteSummary.beerWeight.toFixed(2)} kg ({wasteSummary.beerQty} nos)
+                  </span>
+                </div>
+                <div className="col-span-3 text-slate-600 font-mono text-center">
+                  {wasteSummary.beerQty} nos
+                </div>
+                <div className="col-span-4">
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="Rate / Box (₹)"
+                    value={beerWasteRate}
+                    onChange={(e) => setBeerWasteRate(e.target.value)}
+                    className="w-full rounded-lg bg-amber-50/50 border border-amber-300 py-1.5 px-2.5 text-xs text-slate-800 outline-none focus:border-amber-500 font-mono"
+                  />
+                </div>
+              </div>
+
+              {/* 2. Brandy Cotton Box Waste Row */}
+              <div className="grid grid-cols-12 gap-2 items-center bg-white p-2.5 rounded-lg border border-amber-200/80 shadow-xs text-xs">
+                <div className="col-span-5 font-semibold text-slate-800">
+                  Brandy Bottle Cotton Box Waste
+                  <span className="block text-[11px] font-mono text-cyan-700 font-medium">
+                    {wasteSummary.brandyWeight.toFixed(2)} kg ({wasteSummary.brandyQty} nos)
+                  </span>
+                </div>
+                <div className="col-span-3 text-slate-600 font-mono text-center">
+                  {wasteSummary.brandyQty} nos
+                </div>
+                <div className="col-span-4">
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="Rate / Box (₹)"
+                    value={brandyWasteRate}
+                    onChange={(e) => setBrandyWasteRate(e.target.value)}
+                    className="w-full rounded-lg bg-amber-50/50 border border-amber-300 py-1.5 px-2.5 text-xs text-slate-800 outline-none focus:border-amber-500 font-mono"
+                  />
+                </div>
+              </div>
             </div>
 
+            {/* BILLING BREAKDOWN */}
             <div className="mt-4 pt-3 border-t border-slate-200 text-xs space-y-1">
               <div className="flex justify-between text-slate-600"><span>Gross Taxable Amount</span><span>₹{grossTaxable.toFixed(2)}</span></div>
-              <div className="flex justify-between text-red-600 font-medium"><span>Less Waste Deduction Value</span><span>- ₹{wasteDeductionVal.toFixed(2)}</span></div>
+              <div className="flex justify-between text-cyan-700 font-medium"><span>Add Waste Value</span><span>+ ₹{totalWasteValue.toFixed(2)}</span></div>
               <div className="flex justify-between font-bold text-slate-800 border-t pt-1"><span>Net Taxable Amount</span><span>₹{taxable.toFixed(2)}</span></div>
               <div className="flex justify-between text-slate-600"><span>CGST ({cgp}%)</span><span>₹{cgst.toFixed(2)}</span></div>
               <div className="flex justify-between text-slate-600"><span>SGST ({sgp}%)</span><span>₹{sgst.toFixed(2)}</span></div>
@@ -646,6 +856,32 @@ export default function Invoices() {
           </form>
         </div>
       )}
+
+      {/* PRINT CSS SETUP FOR EXACT A4 PAGES */}
+      <style>{`
+        @media print {
+          body * {
+            visibility: hidden;
+          }
+          .print-single-page, .print-single-page * {
+            visibility: visible;
+          }
+          .print-single-page {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+          }
+          .print-page-break {
+            page-break-after: always;
+            break-after: page;
+          }
+          @page {
+            size: A4 portrait;
+            margin: 10mm;
+          }
+        }
+      `}</style>
     </div>
   );
 }
