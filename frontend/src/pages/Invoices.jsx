@@ -102,13 +102,64 @@ export default function Invoices() {
     return Number(settings?.default_rate ?? 16);
   };
 
+  // AUTO-FETCH COTTON BOX ENTRY DATA WHEN DATE OR SHOP CHANGES IN MODAL
+  useEffect(() => {
+    if (modal && invDate) {
+      api.get("/entries", { params: { date: invDate, shop_id: shopId || undefined } })
+        .then((res) => {
+          const entryList = safeExtractArray(res);
+          if (entryList.length > 0) {
+            // Aggregate brandy and beer quantities from matching entries on this date
+            let totalBrandy = 0;
+            let totalBeer = 0;
+            
+            entryList.forEach((e) => {
+              totalBrandy += Number(e.brandy_qty || 0);
+              totalBeer += Number(e.beer_qty || 0);
+              // Fallback if legacy single quantity field used
+              if (!e.brandy_qty && !e.beer_qty && e.quantity) {
+                totalBrandy += Number(e.quantity);
+              }
+            });
+
+            const newItems = [];
+            const brandyRate = rateFor("Brandy Box");
+            const beerRate = rateFor("Beer Box");
+
+            if (totalBrandy > 0) {
+              newItems.push({
+                description: "Brandy Cotton Box (420g)",
+                hsn: "4819",
+                unit: "PCS",
+                quantity: totalBrandy,
+                rate: brandyRate
+              });
+            }
+            if (totalBeer > 0) {
+              newItems.push({
+                description: "Beer Bottle Cotton Box (220g)",
+                hsn: "4819",
+                unit: "PCS",
+                quantity: totalBeer,
+                rate: beerRate
+              });
+            }
+
+            if (newItems.length > 0) {
+              setItems(newItems);
+              toast.success(`Loaded cotton box entries for ${invDate}`);
+            }
+          }
+        })
+        .catch(() => {});
+    }
+  }, [invDate, shopId, modal]);
+
   const safeInvoices = Array.isArray(invoices) ? invoices : [];
   const pageCount = Math.max(1, Math.ceil(safeInvoices.length / PAGE_SIZE));
   const rows = useMemo(() => safeInvoices.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [safeInvoices, page]);
 
-  const companyList = useMemo(() => {
-    return companies;
-  }, [companies]);
+  const companyList = useMemo(() => companies, [companies]);
 
   const summary = useMemo(() => {
     const totalSales = safeInvoices.reduce((acc, i) => acc + (Number(i.total_amount) || 0), 0);
@@ -186,7 +237,6 @@ export default function Invoices() {
     navigate(`/invoices/${targetId}`);
   };
 
-  // DELETE INVOICE HANDLER
   const handleDeleteInvoice = async (inv) => {
     if (!canManage) { toast.error("Unauthorized: Only admins can delete invoices"); return; }
     const targetId = inv.id || inv._id || inv.invoice_id;
@@ -312,45 +362,45 @@ export default function Invoices() {
         </button>
       </PageHeader>
 
-      {/* TOP SUMMARY CARDS WITH HOVER EXPAND / NO SHRINK */}
+      {/* TOP SUMMARY CARDS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 mb-6">
-        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-cyan-500/10 to-blue-500/5 border-cyan-500/25 group relative cursor-pointer" title={`Total Companies: ${summary.uniqueCompanies}`}>
+        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-cyan-500/10 to-blue-500/5 border-cyan-500/25">
           <div className="p-2.5 rounded-xl bg-cyan-500/20 text-cyan-400 shrink-0"><Building2 className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Companies</p>
-            <p className="text-lg font-bold font-mono text-cyan-300 truncate group-hover:whitespace-normal group-hover:overflow-visible group-hover:absolute group-hover:bg-slate-900 group-hover:p-2 group-hover:z-20 group-hover:shadow-lg group-hover:rounded-lg">{summary.uniqueCompanies}</p>
+            <p className="text-lg font-bold font-mono text-cyan-300">{summary.uniqueCompanies}</p>
           </div>
         </Card>
 
-        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border-emerald-500/25 group relative cursor-pointer" title={`Total Sales: ${inr(summary.totalSales)}`}>
+        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border-emerald-500/25">
           <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 shrink-0"><IndianRupee className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Sales</p>
-            <p className="text-lg font-bold font-mono text-emerald-300 truncate group-hover:whitespace-normal group-hover:overflow-visible group-hover:absolute group-hover:bg-slate-900 group-hover:p-2 group-hover:z-20 group-hover:shadow-lg group-hover:rounded-lg">{inr(summary.totalSales)}</p>
+            <p className="text-lg font-bold font-mono text-emerald-300">{inr(summary.totalSales)}</p>
           </div>
         </Card>
 
-        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-amber-500/10 to-orange-500/5 border-amber-500/25 group relative cursor-pointer" title={`Total Paid: ${inr(summary.totalPaid)}`}>
+        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-amber-500/10 to-orange-500/5 border-amber-500/25">
           <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 shrink-0"><Wallet className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Paid</p>
-            <p className="text-lg font-bold font-mono text-amber-300 truncate group-hover:whitespace-normal group-hover:overflow-visible group-hover:absolute group-hover:bg-slate-900 group-hover:p-2 group-hover:z-20 group-hover:shadow-lg group-hover:rounded-lg">{inr(summary.totalPaid)}</p>
+            <p className="text-lg font-bold font-mono text-amber-300">{inr(summary.totalPaid)}</p>
           </div>
         </Card>
 
-        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-red-500/10 to-rose-500/5 border-red-500/25 group relative cursor-pointer" title={`Total Outstanding: ${inr(summary.totalBalance)}`}>
+        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-red-500/10 to-rose-500/5 border-red-500/25">
           <div className="p-2.5 rounded-xl bg-red-500/20 text-red-400 shrink-0"><Receipt className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Outstanding</p>
-            <p className="text-lg font-bold font-mono text-red-300 truncate group-hover:whitespace-normal group-hover:overflow-visible group-hover:absolute group-hover:bg-slate-900 group-hover:p-2 group-hover:z-20 group-hover:shadow-lg group-hover:rounded-lg">{inr(summary.totalBalance)}</p>
+            <p className="text-lg font-bold font-mono text-red-300">{inr(summary.totalBalance)}</p>
           </div>
         </Card>
 
-        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-purple-500/10 to-indigo-500/5 border-purple-500/25 sm:col-span-2 xl:col-span-1 group relative cursor-pointer" title={`Total Brandy Waste: ${summary.totalBrandyWaste.toFixed(2)} kg`}>
+        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-purple-500/10 to-indigo-500/5 border-purple-500/25 sm:col-span-2 xl:col-span-1">
           <div className="p-2.5 rounded-xl bg-purple-500/20 text-purple-400 shrink-0"><Scale className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Brandy Waste</p>
-            <p className="text-lg font-bold font-mono text-purple-300 truncate group-hover:whitespace-normal group-hover:overflow-visible group-hover:absolute group-hover:bg-slate-900 group-hover:p-2 group-hover:z-20 group-hover:shadow-lg group-hover:rounded-lg">{summary.totalBrandyWaste.toFixed(2)} kg</p>
+            <p className="text-lg font-bold font-mono text-purple-300">{summary.totalBrandyWaste.toFixed(2)} kg</p>
           </div>
         </Card>
       </div>
@@ -484,7 +534,7 @@ export default function Invoices() {
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setModal(false)} />
           <form onSubmit={saveInvoice} className="glass relative z-10 w-full max-w-2xl rounded-2xl p-6 max-h-[90vh] overflow-y-auto text-slate-800 bg-white shadow-xl border border-slate-200">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="font-display text-lg font-semibold text-slate-900">{editId ? "Edit Sale Invoice" : "New Sale Invoice"}</h3>
+              <h3 className="font-display text-lg font-semibold text-slate-900">{editId ? "Edit Sale Invoice" : "New Sale Invoice (Auto-fetched by Date)"}</h3>
               <button type="button" onClick={() => setModal(false)}><X className="h-5 w-5 text-slate-500 hover:text-slate-700" /></button>
             </div>
 
@@ -521,8 +571,8 @@ export default function Invoices() {
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
               <div>
-                <label className="text-xs text-slate-600 font-medium">Invoice Date</label>
-                <input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500" />
+                <label className="text-xs text-cyan-700 font-bold">Invoice Date (Select Date)</label>
+                <input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} className="mt-1 w-full rounded-lg bg-cyan-50 border border-cyan-300 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 font-semibold" />
               </div>
               <div>
                 <label className="text-xs text-slate-600 font-medium">Truck No.</label>
@@ -534,8 +584,10 @@ export default function Invoices() {
               </div>
             </div>
 
-            <label className="text-xs text-slate-600 font-medium">Line Items</label>
-            <div className="mt-1 space-y-2">
+            <div className="flex justify-between items-center mb-1">
+              <label className="text-xs text-slate-600 font-medium">Line Items (Auto-loaded from Cotton Box Entries for selected date)</label>
+            </div>
+            <div className="space-y-2">
               {items.map((it, i) => {
                 const isBrandy = (it.description || "").toLowerCase().includes("brandy");
                 const isBeer = (it.description || "").toLowerCase().includes("beer");
@@ -549,11 +601,11 @@ export default function Invoices() {
                         className="col-span-4 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500">
                         {BOX_TYPES.map((t) => <option key={t} value={t} className="bg-white text-slate-800">{t}</option>)}
                       </select>
-                      <input value={it.hsn} onChange={(e) => setItem(i, "hsn", e.target.value)} placeholder="HSN"
+                      <input value={it.hsn} onChange={(e) => setItems(arr => arr.map((x, idx) => idx === i ? { ...x, hsn: e.target.value } : x))} placeholder="HSN"
                         className="col-span-2 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
-                      <input type="number" min="1" value={it.quantity} onChange={(e) => setItem(i, "quantity", e.target.value)} placeholder="Box Qty"
+                      <input type="number" min="1" value={it.quantity} onChange={(e) => setItems(arr => arr.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x))} placeholder="Box Qty"
                         className="col-span-2 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
-                      <input type="number" step="0.01" value={it.rate} onChange={(e) => setItem(i, "rate", e.target.value)} placeholder="Rate / KG"
+                      <input type="number" step="0.01" value={it.rate} onChange={(e) => setItems(arr => arr.map((x, idx) => idx === i ? { ...x, rate: e.target.value } : x))} placeholder="Rate / KG"
                         className="col-span-3 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
                       <button type="button" onClick={() => removeItem(i)} className="col-span-1 p-2 text-red-500 hover:text-red-700 flex justify-center"><Trash2 className="h-4 w-4" /></button>
                     </div>

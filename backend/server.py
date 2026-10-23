@@ -162,6 +162,25 @@ def get_db():
         db.close()
 
 
+# --- PYDANTIC SCHEMAS ---
+
+class EntryCreate(BaseModel):
+    shop_id: Optional[int] = None
+    box_type: Optional[str] = "Cotton Box"
+    brandy_qty: Optional[int] = 0
+    brandy_rate: Optional[float] = 16.0
+    beer_qty: Optional[int] = 0
+    beer_rate: Optional[float] = 16.0
+    quantity: Optional[int] = 0
+    waste_kg: Optional[float] = 0.0
+    taxable_amount: Optional[float] = 0.0
+    cgst_amount: Optional[float] = 0.0
+    sgst_amount: Optional[float] = 0.0
+    total_amount: Optional[float] = 0.0
+    entry_date: Optional[str] = None
+    notes: Optional[str] = None
+
+
 # --- API ENDPOINTS ---
 
 @app.get("/api/dashboard")
@@ -239,11 +258,21 @@ def get_opening_balance(db: Session = Depends(get_db)):
         "history": history
     }
 
-
 @app.get("/api/entries")
 @app.get("/entries")
-def get_entries(db: Session = Depends(get_db)):
-    entries = db.query(EntryModel).order_by(EntryModel.entry_date.desc()).all()
+def get_entries(date: Optional[str] = None, shop_id: Optional[int] = None, db: Session = Depends(get_db)):
+    query = db.query(EntryModel)
+    if date:
+        try:
+            start_dt = datetime.datetime.fromisoformat(date)
+            end_dt = start_dt + datetime.timedelta(days=1)
+            query = query.filter(EntryModel.entry_date >= start_dt, EntryModel.entry_date < end_dt)
+        except Exception:
+            pass
+    if shop_id:
+        query = query.filter(EntryModel.shop_id == shop_id)
+        
+    entries = query.order_by(EntryModel.entry_date.desc()).all()
     result = []
     for e in entries:
         shop_no = e.shop.shop_no if e.shop else "—"
@@ -264,6 +293,116 @@ def get_entries(db: Session = Depends(get_db)):
             "entry_date": e.entry_date.isoformat() if e.entry_date else None
         })
     return result
+
+
+@app.post("/api/entries")
+@app.post("/entries")
+def create_entry(payload: EntryCreate, db: Session = Depends(get_db)):
+    if payload.entry_date:
+        try:
+            entry_dt = datetime.datetime.fromisoformat(payload.entry_date)
+        except Exception:
+            entry_dt = datetime.datetime.utcnow()
+    else:
+        entry_dt = datetime.datetime.utcnow()
+
+    total_qty = (payload.brandy_qty or 0) + (payload.beer_qty or 0)
+    if total_qty == 0 and payload.quantity:
+        total_qty = payload.quantity
+
+    waste = payload.waste_kg
+    if waste is None or waste == 0.0:
+        waste = (payload.brandy_qty or 0) * 0.420
+
+    new_entry = EntryModel(
+        shop_id=payload.shop_id,
+        box_type=payload.box_type,
+        brandy_qty=payload.brandy_qty or 0,
+        brandy_rate=payload.brandy_rate or 16.0,
+        beer_qty=payload.beer_qty or 0,
+        beer_rate=payload.beer_rate or 16.0,
+        quantity=total_qty,
+        waste_kg=float(waste),
+        taxable_amount=payload.taxable_amount or 0.0,
+        cgst_amount=payload.cgst_amount or 0.0,
+        sgst_amount=payload.sgst_amount or 0.0,
+        total_amount=payload.total_amount or 0.0,
+        entry_date=entry_dt,
+        notes=payload.notes
+    )
+
+    db.add(new_entry)
+    db.commit()
+    db.refresh(new_entry)
+
+    return {
+        "message": "Entry created successfully",
+        "id": new_entry.id,
+        "shop_id": new_entry.shop_id,
+        "quantity": new_entry.quantity,
+        "total_amount": new_entry.total_amount
+    }
+
+
+@app.put("/api/entries/{entry_id}")
+@app.put("/entries/{entry_id}")
+def update_entry(entry_id: int, payload: EntryCreate, db: Session = Depends(get_db)):
+    entry = db.query(EntryModel).filter(EntryModel.id == entry_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    
+    if payload.shop_id is not None:
+        entry.shop_id = payload.shop_id
+    if payload.box_type is not None:
+        entry.box_type = payload.box_type
+    if payload.brandy_qty is not None:
+        entry.brandy_qty = payload.brandy_qty
+    if payload.brandy_rate is not None:
+        entry.brandy_rate = payload.brandy_rate
+    if payload.beer_qty is not None:
+        entry.beer_qty = payload.beer_qty
+    if payload.beer_rate is not None:
+        entry.beer_rate = payload.beer_rate
+    
+    total_qty = (entry.brandy_qty or 0) + (entry.beer_qty or 0)
+    entry.quantity = total_qty
+    
+    waste = payload.waste_kg
+    if waste is None or waste == 0.0:
+        waste = (entry.brandy_qty or 0) * 0.420
+    entry.waste_kg = float(waste)
+    
+    if payload.taxable_amount is not None:
+        entry.taxable_amount = payload.taxable_amount
+    if payload.cgst_amount is not None:
+        entry.cgst_amount = payload.cgst_amount
+    if payload.sgst_amount is not None:
+        entry.sgst_amount = payload.sgst_amount
+    if payload.total_amount is not None:
+        entry.total_amount = payload.total_amount
+        
+    if payload.entry_date:
+        try:
+            entry.entry_date = datetime.datetime.fromisoformat(payload.entry_date)
+        except Exception:
+            pass
+    if payload.notes is not None:
+        entry.notes = payload.notes
+
+    db.commit()
+    db.refresh(entry)
+    return {"message": "Entry updated successfully", "id": entry.id}
+
+
+@app.delete("/api/entries/{entry_id}")
+@app.delete("/entries/{entry_id}")
+def delete_entry(entry_id: int, db: Session = Depends(get_db)):
+    entry = db.query(EntryModel).filter(EntryModel.id == entry_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found")
+    db.delete(entry)
+    db.commit()
+    return {"message": "Entry deleted successfully"}
 
 
 @app.get("/api/invoices")
@@ -327,12 +466,10 @@ def get_daily_report(day: Optional[str] = None, db: Session = Depends(get_db)):
 
     sale_total = sum(i.total_amount or 0.0 for i in invoices if (i.invoice_type or "").upper() == "SALES")
     
-    # Calculate Purchase Total from both Entries (Cotton Box) & Purchase Invoices
     purchase_entries_total = sum(e.total_amount or 0.0 for e in entries)
     purchase_invoices_total = sum(i.total_amount or 0.0 for i in invoices if (i.invoice_type or "").upper() != "SALES")
     purchase_total = purchase_entries_total + purchase_invoices_total
 
-    # Calculate 5% GST
     gst_sales = sale_total * 0.05
     gst_purchase = purchase_total * 0.05
 
@@ -372,7 +509,6 @@ def get_monthly_report(month: Optional[str] = None, db: Session = Depends(get_db
 
     sale_total = sum(i.total_amount or 0.0 for i in invoices if (i.invoice_type or "").upper() == "SALES")
     
-    # Calculate Purchase Total from both Entries & Purchase Invoices
     purchase_entries_total = sum(e.total_amount or 0.0 for e in entries)
     purchase_invoices_total = sum(i.total_amount or 0.0 for i in invoices if (i.invoice_type or "").upper() != "SALES")
     purchase_total = purchase_entries_total + purchase_invoices_total
@@ -449,6 +585,8 @@ def get_collections(db: Session = Depends(get_db)):
         "total_outstanding": float(max(0.0, current_opening - total_purchases)),
         "rows": rows
     }
+
+
 # --- WASTE ANALYTICS ENDPOINTS ---
 
 @app.get("/api/analytics/waste")
