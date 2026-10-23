@@ -19,19 +19,29 @@ export default function CalendarPage() {
   const [autoSent, setAutoSent] = useState(false);
   const navigate = useNavigate();
 
-  // WhatsApp Reminder Sender
+  const todayStr = new Date().toISOString().slice(0, 10);
+
+  // WhatsApp Reminder Sender - Filters Today's and Overdue Reminders
   const sendWhatsAppReminder = (reminderList) => {
     if (!reminderList || reminderList.length === 0) return;
     
-    const dueShops = reminderList.filter((r) => r.status === "due_today" || r.status === "overdue");
-    if (dueShops.length === 0) return;
+    // Filter today's due and overdue shops
+    const dueShops = reminderList.filter((r) => {
+      const isDueToday = r.next_pickup && r.next_pickup.slice(0, 10) === todayStr;
+      return isDueToday || r.status === "due_today" || r.status === "overdue";
+    });
+
+    if (dueShops.length === 0) {
+      alert("No pending reminders for today!");
+      return;
+    }
 
     const messageLines = dueShops.map(
       (item) => `• Shop: ${item.shop_no} (${item.shop_name || 'N/A'}) - Status: ${item.status.toUpperCase()} - Date: ${item.next_pickup}`
     );
 
     const message = encodeURIComponent(
-      `*Auro Product Automatic Pickup Reminder*\n\nAttention! You have pickup tasks pending:\n\n${messageLines.join("\n")}\n\nPlease action these entries immediately.`
+      `*Auro Product Daily Pickup Reminder*\n\nAttention! Here are today's pending tasks:\n\n${messageLines.join("\n")}\n\nPlease action these entries immediately.`
     );
 
     const whatsappUrl = `https://api.whatsapp.com/send?phone=91${TARGET_PHONE}&text=${message}`;
@@ -68,7 +78,6 @@ export default function CalendarPage() {
   for (let i = 0; i < firstDay; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
-  const todayStr = new Date().toISOString().slice(0, 10);
   const monthName = cursor.toLocaleDateString("en-IN", { month: "long", year: "numeric" });
 
   return (

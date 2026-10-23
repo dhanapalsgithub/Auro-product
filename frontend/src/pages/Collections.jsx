@@ -30,77 +30,134 @@ const exportToCsv = (filename, rows, headers) => {
 };
 
 export default function Collections() {
-  const [data, setData] = useState(null);
+  const [collectionsData, setCollectionsData] = useState(null);
+  const [entriesData, setEntriesData] = useState([]);
+  const [initialOpeningBalance, setInitialOpeningBalance] = useState(0);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
 
   useEffect(() => {
-    api
-      .get("/collections")
-      .then((r) => setData(r.data))
-      .catch(() => setData(null));
+    // Fetch all required data concurrently to ensure accuracy
+    Promise.allSettled([
+      api.get("/collections"),
+      api.get("/entries"),
+      api.get("/settings/opening-balance")
+    ]).then(([colRes, entRes, obRes]) => {
+      if (colRes.status === "fulfilled") setCollectionsData(colRes.value.data);
+      if (entRes.status === "fulfilled") {
+        const entArr = Array.isArray(entRes.value.data)
+          ? entRes.value.data
+          : entRes.value.data?.data || [];
+        setEntriesData(entArr);
+      }
+      if (obRes.status === "fulfilled") {
+        setInitialOpeningBalance(Number(obRes.value.data?.opening_balance || 0));
+      }
+    });
   }, []);
 
+  // Map entries total purchase per shop (Cotton Box Entry with GST)
+  const entriesByShop = useMemo(() => {
+    const shopMap = {};
+    const shopNoMap = {};
+
+    entriesData.forEach((entry) => {
+      const amt = Number(entry.total_amount || entry.grand_total || entry.amount || 0);
+      if (entry.shop_id) {
+        shopMap[entry.shop_id] = (shopMap[entry.shop_id] || 0) + amt;
+      }
+      if (entry.shop_no && entry.shop_no !== "—") {
+        shopNoMap[String(entry.shop_no).trim()] = (shopNoMap[String(entry.shop_no).trim()] || 0) + amt;
+      }
+    });
+
+    return { shopMap, shopNoMap };
+  }, [entriesData]);
+
+  // Total Purchase Entries (Cotton Box Entries with GST) across all shops
+  const totalCottonBoxPurchases = useMemo(() => {
+    return entriesData.reduce(
+      (sum, e) => sum + Number(e.total_amount || e.grand_total || e.amount || 0),
+      0
+    );
+  }, [entriesData]);
+
+  // Merge shop rows with precise Cotton Box purchase amounts
   const rowsData = useMemo(() => {
-    if (Array.isArray(data?.rows)) return data.rows;
-    if (Array.isArray(data)) return data;
-    return [];
-  }, [data]);
+    const rawRows = Array.isArray(collectionsData?.rows) ? collectionsData.rows : [];
 
-  const openingBalance = Number(data?.global_opening_balance || 0);
+    return rawRows.map((r) => {
+      const shopIdKey = r.shop_id;
+      const shopNoKey = String(r.shop_no || "").trim();
 
-  // 1. Total Revenue = Total Sale Invoice Amount with GST (Invoiced)
+      const entryPurchaseAmt =
+        (shopIdKey && entriesByShop.shopMap[shopIdKey]) ||
+        (shopNoKey && entriesByShop.shopNoMap[shopNoKey]) ||
+        0;
+
+      const finalPurchaseAmt = Math.max(Number(r.purchase_amount || 0), entryPurchaseAmt);
+
+      return {
+        ...r,
+        purchase_amount: finalPurchaseAmt
+      };
+    });
+  }, [collectionsData, entriesByShop]);
+
+  // Calculation for Opening & Closing Balance
+  const currentOpeningBalance = Number(collectionsData?.global_opening_balance || initialOpeningBalance);
+  
   const totalRevenue = useMemo(() => {
-    if (typeof data?.total_revenue === "number" && data.total_revenue > 0) {
-      return data.total_revenue;
+    if (typeof collectionsData?.total_revenue === "number" && collectionsData.total_revenue > 0) {
+      return collectionsData.total_revenue;
     }
-    // Sum of all sale invoices (with GST) across shops
     return rowsData.reduce((sum, r) => sum + Number(r.invoiced || 0), 0);
-  }, [data, rowsData]);
+  }, [collectionsData, rowsData]);
 
-  // 2. Total Purchases (with GST)
   const totalPurchases = useMemo(() => {
-    if (typeof data?.total_purchases === "number" && data.total_purchases > 0) {
-      return data.total_purchases;
-    }
-    return rowsData.reduce((sum, r) => sum + Number(r.purchase_amount || 0), 0);
-  }, [data, rowsData]);
+    return Math.max(
+      totalCottonBoxPurchases,
+      rowsData.reduce((sum, r) => sum + Number(r.purchase_amount || 0), 0)
+    );
+  }, [totalCottonBoxPurchases, rowsData]);
 
-  // 3. Total Expenses
-  const totalExpenses = useMemo(() => {
-    if (typeof data?.total_expenses === "number" && data.total_expenses > 0) {
-      return data.total_expenses;
-    }
-    return rowsData.reduce((sum, r) => sum + Number(r.expenses || 0), 0);
-  }, [data, rowsData]);
+  const totalExpenses = Number(collectionsData?.total_expenses || 0);
+  const netProfit = totalRevenue - (totalPurchases + totalExpenses);
 
-  // 4. Net Profit = Total Revenue (Sales with GST) - (Total Purchases + Total Expenses)
-  const netProfit = useMemo(() => {
-    if (typeof data?.net_profit === "number" && data.net_profit !== 0) {
-      return data.net_profit;
-    }
-    return totalRevenue - (totalPurchases + totalExpenses);
-  }, [data, totalRevenue, totalPurchases, totalExpenses]);
-
-  // 5. Closing / Outstanding Balance
-  const outstandingBalance = useMemo(() => {
-    if (typeof data?.total_outstanding === "number" && data.total_outstanding > 0) {
-      return data.total_outstanding;
-    }
-    const totalCollected = Number(data?.total_collected || 0);
-    return openingBalance + totalRevenue - (totalPurchases + totalExpenses) - totalCollected;
-  }, [data, openingBalance, totalRevenue, totalPurchases, totalExpenses]);
+  // Closing Balance = Opening Balance minus Total Cotton Box Purchase Entries with GST
+  const closingBalance = Math.max(0, currentOpeningBalance - totalPurchases);
 
   const filtered = useMemo(() => {
-    if (!search) return rowsData;
-    const q = search.toLowerCase();
-    return rowsData.filter(
-      (r) =>
-        (r.shop_no && String(r.shop_no).toLowerCase().includes(q)) ||
-        (r.name && r.name.toLowerCase().includes(q)) ||
-        (r.location && r.location.toLowerCase().includes(q))
-    );
-  }, [rowsData, search]);
+    let result = rowsData;
+
+    if (fromDate || toDate) {
+      result = result.filter((r) => {
+        const itemDate = r.date || r.created_at || r.invoice_date;
+        if (!itemDate) return false;
+        if (fromDate && itemDate < fromDate) return false;
+        if (toDate && itemDate > toDate) return false;
+        return true;
+      });
+    }
+
+    if (search) {
+      const q = search.toLowerCase();
+      result = result.filter(
+        (r) =>
+          (r.shop_no && String(r.shop_no).toLowerCase().includes(q)) ||
+          (r.name && r.name.toLowerCase().includes(q)) ||
+          (r.location && r.location.toLowerCase().includes(q))
+      );
+    }
+
+    return [...result].sort((a, b) => {
+      const dateA = new Date(a.date || a.created_at || a.invoice_date || 0);
+      const dateB = new Date(b.date || b.created_at || b.invoice_date || 0);
+      return dateB - dateA;
+    });
+  }, [rowsData, search, fromDate, toDate]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
   const rows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -124,8 +181,10 @@ export default function Collections() {
         <button
           onClick={() =>
             exportToCsv("collections.csv", rowsData, [
+              { label: "Date", accessor: "date" },
               { label: "Shop No", accessor: "shop_no" },
               { label: "Name", accessor: "name" },
+              { label: "Purchase (GST)", accessor: "purchase_amount" },
               { label: "Invoiced", accessor: "invoiced" },
               { label: "Paid", accessor: "paid" },
             ])
@@ -144,7 +203,7 @@ export default function Collections() {
           </div>
           <div>
             <p className="text-xs text-slate-500 font-medium">Opening Balance</p>
-            <p className="text-lg font-bold text-slate-900">{inr(openingBalance)}</p>
+            <p className="text-lg font-bold text-slate-900">{inr(currentOpeningBalance)}</p>
           </div>
         </div>
 
@@ -176,14 +235,14 @@ export default function Collections() {
           </div>
           <div>
             <p className="text-xs text-slate-500 font-medium">Closing Balance</p>
-            <p className="text-lg font-bold text-slate-900">{inr(outstandingBalance)}</p>
+            <p className="text-lg font-bold text-indigo-600">{inr(closingBalance)}</p>
           </div>
         </div>
       </div>
 
-      {/* Search Input */}
-      <div className="p-4 mb-4 rounded-2xl bg-white border border-slate-200 shadow-sm">
-        <div className="relative">
+      {/* Search Input & Date Filters */}
+      <div className="p-4 mb-4 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-4">
+        <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
             value={search}
@@ -195,6 +254,27 @@ export default function Collections() {
             className="w-full rounded-xl bg-slate-50 border border-slate-200 py-2.5 pl-10 pr-4 text-sm text-slate-800 placeholder-slate-400 outline-none focus:border-cyan-500"
           />
         </div>
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            value={fromDate}
+            onChange={(e) => {
+              setFromDate(e.target.value);
+              setPage(1);
+            }}
+            className="rounded-xl bg-slate-50 border border-slate-200 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500"
+          />
+          <span className="text-slate-400 text-sm">to</span>
+          <input
+            type="date"
+            value={toDate}
+            onChange={(e) => {
+              setToDate(e.target.value);
+              setPage(1);
+            }}
+            className="rounded-xl bg-slate-50 border border-slate-200 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500"
+          />
+        </div>
       </div>
 
       {/* Table Container */}
@@ -203,6 +283,7 @@ export default function Collections() {
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-100 text-slate-600 border-b border-slate-200 font-medium">
               <tr>
+                <th className="p-3">Date</th>
                 <th className="p-3">Shop No</th>
                 <th className="p-3">Name</th>
                 <th className="p-3">Location</th>
@@ -215,7 +296,7 @@ export default function Collections() {
             <tbody className="divide-y divide-slate-100">
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-400 text-xs">
+                  <td colSpan={8} className="p-6 text-center text-slate-400 text-xs">
                     No shops or collection data found.
                   </td>
                 </tr>
@@ -223,12 +304,15 @@ export default function Collections() {
                 rows.map((r, idx) => {
                   const shopOut = Math.max(
                     0,
-                    Number(r.invoiced || 0) -
-                      Number(r.purchase_amount || 0) -
+                    Number(r.purchase_amount || 0) +
+                      Number(r.invoiced || 0) -
                       Number(r.paid || 0)
                   );
                   return (
                     <tr key={idx} className="hover:bg-slate-50/80 transition">
+                      <td className="p-3 text-slate-500">
+                        {r.date || r.created_at || r.invoice_date || "-"}
+                      </td>
                       <td className="p-3 font-semibold text-cyan-700">
                         {r.shop_no || "-"}
                       </td>
@@ -236,7 +320,7 @@ export default function Collections() {
                         {r.name || "-"}
                       </td>
                       <td className="p-3 text-slate-500">{r.location || "-"}</td>
-                      <td className="p-3 text-right text-slate-600">
+                      <td className="p-3 text-right font-semibold text-slate-800">
                         {inr(r.purchase_amount || 0)}
                       </td>
                       <td className="p-3 text-right text-slate-600">

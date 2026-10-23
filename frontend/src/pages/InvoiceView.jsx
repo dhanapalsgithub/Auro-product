@@ -6,6 +6,8 @@ import { downloadElementPdf } from "@/lib/pdf";
 import { QRCodeCanvas } from "qrcode.react";
 import { ArrowLeft, Printer, Loader2, Download } from "lucide-react";
 
+const BRANDY_BOX_WEIGHT = 0.420; // 420 grams
+
 function numToWords(num) {
   const a = ["", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
   const b = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
@@ -51,9 +53,30 @@ export default function InvoiceView() {
 
   const itemsList = Array.isArray(inv.items) ? inv.items : (inv.line_items || []);
 
-  // Calculate items sum & taxable amount safely
-  const itemTotal = itemsList.reduce((acc, it) => acc + (Number(it.amount) || (Number(it.quantity) * Number(it.rate)) || 0), 0);
-  const taxableVal = Number(inv.taxable_amount ?? inv.taxable ?? itemTotal);
+  // Calculate items gross sum
+  const grossItemTotal = itemsList.reduce((acc, it) => acc + (Number(it.amount) || (Number(it.quantity) * Number(it.rate)) || 0), 0);
+
+  // Calculate waste deduction
+  const calculatedWasteKg = inv.waste_kg !== undefined && inv.waste_kg !== null
+    ? Number(inv.waste_kg)
+    : itemsList.reduce((acc, it) => {
+        const desc = (it.description || "").toLowerCase();
+        if (desc.includes("brandy")) {
+          return acc + (Number(it.quantity || 0) * BRANDY_BOX_WEIGHT);
+        }
+        return acc;
+      }, 0);
+
+  const wasteDeductionValue = itemsList.reduce((acc, it) => {
+    const desc = (it.description || "").toLowerCase();
+    if (desc.includes("brandy")) {
+      return acc + (Number(it.quantity || 0) * BRANDY_BOX_WEIGHT * Number(it.rate || 0));
+    }
+    return acc;
+  }, 0);
+
+  // Calculate Net Taxable Value
+  const taxableVal = Number(inv.taxable_amount ?? inv.taxable ?? Math.max(0, grossItemTotal - wasteDeductionValue));
 
   const cgstRate = Number(inv.cgst_percent ?? 2.5);
   const sgstRate = Number(inv.sgst_percent ?? 2.5);
@@ -124,7 +147,8 @@ export default function InvoiceView() {
                       <b>Invoice Date:</b> {fmtDate(inv.invoice_date)}<br />
                       <b>Place of Supply:</b> {inv.shop_district || s.state} ({s.state_code})<br />
                       {inv.truck_no && <><b>Truck No:</b> {inv.truck_no}<br /></>}
-                      {inv.total_weight && <><b>Total Weight:</b> {inv.total_weight} kg</>}
+                      {inv.total_weight && <><b>Gross Weight:</b> {inv.total_weight} kg<br /></>}
+                      {calculatedWasteKg > 0 && <><b>Brandy Waste Deducted:</b> {calculatedWasteKg.toFixed(2)} kg</>}
                     </td>
                     <td className="w-1/2 align-top border border-black p-2">
                       <b>Bill To (Party / Company):</b><br />
@@ -167,8 +191,20 @@ export default function InvoiceView() {
                       <td colSpan={7} className="text-center p-4 text-gray-500">No items found in this invoice</td>
                     </tr>
                   )}
+                  {wasteDeductionValue > 0 && (
+                    <>
+                      <tr className="border-t border-black text-slate-700">
+                        <td colSpan={6} className="text-right border-r border-black p-1">Gross Item Value</td>
+                        <td className="text-right p-1">{grossItemTotal.toFixed(2)}</td>
+                      </tr>
+                      <tr className="text-red-700 font-medium">
+                        <td colSpan={6} className="text-right border-r border-black p-1">Less: Brandy Waste Deduction ({calculatedWasteKg.toFixed(2)} kg @ Rate)</td>
+                        <td className="text-right p-1">- {wasteDeductionValue.toFixed(2)}</td>
+                      </tr>
+                    </>
+                  )}
                   <tr className="font-semibold border-t border-black">
-                    <td colSpan={6} className="text-right border-r border-black p-1">Taxable Value</td>
+                    <td colSpan={6} className="text-right border-r border-black p-1">Net Taxable Value</td>
                     <td className="text-right p-1">{taxableVal.toFixed(2)}</td>
                   </tr>
                   <tr>
@@ -186,7 +222,7 @@ export default function InvoiceView() {
                     </tr>
                   )}
                   <tr className="font-bold border-t border-black">
-                    <td colSpan={6} className="text-right border-r border-black p-1">Total</td>
+                    <td colSpan={6} className="text-right border-r border-black p-1">Total Amount Payable</td>
                     <td className="text-right p-1">₹ {totalAmount.toFixed(2)}</td>
                   </tr>
                   {inv.amount_paid > 0 && (

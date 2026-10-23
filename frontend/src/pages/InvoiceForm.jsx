@@ -1,29 +1,30 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 export default function InvoiceForm({ shops, inventoryItems, onSubmit }) {
+  const BRANDY_BOX_WEIGHT = 0.420; // 420g
+  const BEER_BOX_WEIGHT = 0.220;   // 220g
+
   const [selectedShop, setSelectedShop] = useState("");
-  const [selectedItem, setSelectedItem] = useState("");
-  const [quantity, setQuantity] = useState(1);
-  const [sellingPrice, setSellingPrice] = useState(0);
-  const [costPrice, setCostPrice] = useState(0);
+  const [brandyQty, setBrandyQty] = useState(0);
+  const [beerQty, setBeerQty] = useState(0);
+  const [ratePerKg, setRatePerKg] = useState(16);
   const [gstRate, setGstRate] = useState(5);
   const [invoiceType, setInvoiceType] = useState("SALES");
 
-  // ஐட்டம் மாறும்போது விலை மற்றும் அடக்க விலையை செட் செய்ய
-  const handleItemChange = (e) => {
-    const itemId = e.target.value;
-    setSelectedItem(itemId);
-    const item = inventoryItems.find((i) => i.id.toString() === itemId);
-    if (item) {
-      setSellingPrice(item.selling_price || item.unit_price || 0);
-      setCostPrice(item.cost_price || 0);
-    }
-  };
+  // Calculate weights based on default weights
+  const grossWeightKg = (brandyQty * BRANDY_BOX_WEIGHT) + (beerQty * BEER_BOX_WEIGHT);
+  const calculatedWasteKg = brandyQty * BRANDY_BOX_WEIGHT;
+  const netWeightKg = Math.max(0, grossWeightKg - calculatedWasteKg);
+  const totalBoxes = Number(brandyQty) + Number(beerQty);
+
+  // Per box rate breakdown for user clarity
+  const brandyBoxRate = (BRANDY_BOX_WEIGHT * ratePerKg).toFixed(2);
+  const beerBoxRate = (BEER_BOX_WEIGHT * ratePerKg).toFixed(2);
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    const taxableValue = sellingPrice * quantity;
+    const taxableValue = netWeightKg * ratePerKg;
     const tax_amount = (taxableValue * gstRate) / 100;
     const grand_total = taxableValue + tax_amount;
 
@@ -32,6 +33,8 @@ export default function InvoiceForm({ shops, inventoryItems, onSubmit }) {
       shop_id: selectedShop ? Number(selectedShop) : null,
       customer_name: shops.find(s => (s.shop_id || s.id).toString() === selectedShop)?.name || "Walk-in Customer",
       invoice_type: invoiceType,
+      total_weight: Number(grossWeightKg.toFixed(2)),
+      waste_kg: Number(calculatedWasteKg.toFixed(2)),
       total_amount: taxableValue,
       tax_amount: tax_amount,
       taxable_value: taxableValue,
@@ -43,7 +46,10 @@ export default function InvoiceForm({ shops, inventoryItems, onSubmit }) {
       amount_paid: grand_total,
       balance: 0.0,
       status: "Paid",
-      items: [{ item_id: selectedItem, quantity, sellingPrice, costPrice, gstRate }]
+      items: [
+        ...(brandyQty > 0 ? [{ description: "Brandy Cotton Box (420g)", quantity: brandyQty, rate: brandyBoxRate, amount: brandyQty * brandyBoxRate }] : []),
+        ...(beerQty > 0 ? [{ description: "Beer Bottle Cotton Box (220g)", quantity: beerQty, rate: beerBoxRate, amount: beerQty * beerBoxRate }] : [])
+      ]
     };
 
     onSubmit(invoiceData);
@@ -99,42 +105,38 @@ export default function InvoiceForm({ shops, inventoryItems, onSubmit }) {
         </select>
       </div>
 
-      {/* Item Selection */}
-      <div>
-        <label className="block text-sm font-medium text-gray-700">Select Product / Item</label>
-        <select 
-          value={selectedItem} 
-          onChange={handleItemChange}
-          className="w-full mt-1 p-2 border rounded-md"
-          required
-        >
-          <option value="">-- Choose Item --</option>
-          {inventoryItems.map((item) => (
-            <option key={item.id} value={item.id}>{item.item_name}</option>
-          ))}
-        </select>
-      </div>
-
-      {/* Quantity & Prices */}
-      <div className="grid grid-cols-3 gap-4">
+      {/* Quantity & Weight Input */}
+      <div className="grid grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700">Quantity</label>
+          <label className="block text-sm font-medium text-gray-700">Brandy Box Qty (420g / box)</label>
           <input 
             type="number" 
-            min="1" 
-            value={quantity} 
-            onChange={(e) => setQuantity(Number(e.target.value))}
+            min="0" 
+            value={brandyQty} 
+            onChange={(e) => setBrandyQty(Number(e.target.value))}
             className="w-full mt-1 p-2 border rounded-md"
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700">
-            {invoiceType === "SALES" ? "Selling Price (₹)" : "Purchase Price (₹)"}
-          </label>
+          <label className="block text-sm font-medium text-gray-700">Beer Box Qty (220g / box)</label>
           <input 
             type="number" 
-            value={sellingPrice} 
-            onChange={(e) => setSellingPrice(Number(e.target.value))}
+            min="0" 
+            value={beerQty} 
+            onChange={(e) => setBeerQty(Number(e.target.value))}
+            className="w-full mt-1 p-2 border rounded-md"
+          />
+        </div>
+      </div>
+
+      {/* Rate & GST */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700">Rate per KG (₹)</label>
+          <input 
+            type="number" 
+            value={ratePerKg} 
+            onChange={(e) => setRatePerKg(Number(e.target.value))}
             className="w-full mt-1 p-2 border rounded-md"
           />
         </div>
@@ -151,6 +153,16 @@ export default function InvoiceForm({ shops, inventoryItems, onSubmit }) {
             <option value={28}>28%</option>
           </select>
         </div>
+      </div>
+
+      {/* Calculated Breakdown Display with Waste Deduction */}
+      <div className="p-3 bg-blue-50 border border-blue-200 rounded-md text-xs space-y-1 text-blue-900">
+        <p className="font-semibold">Weight & Waste Deduction Breakdown:</p>
+        <p>• Gross Weight: <strong>{grossWeightKg.toFixed(2)} kg</strong> ({totalBoxes} Total Boxes)</p>
+        <p className="text-amber-700">• Less Brandy Waste Deduction: <strong>-{calculatedWasteKg.toFixed(2)} kg</strong> ({brandyQty} Brandy boxes @ 420g)</p>
+        <p className="font-bold text-blue-950">• Net Billable Weight: <strong>{netWeightKg.toFixed(2)} kg</strong></p>
+        <p>• Brandy Box Rate: <strong>₹{brandyBoxRate}</strong> / box (0.42 kg × ₹{ratePerKg})</p>
+        <p>• Beer Box Rate: <strong>₹{beerBoxRate}</strong> / box (0.22 kg × ₹{ratePerKg})</p>
       </div>
 
       <button type="submit" className="w-full bg-blue-600 text-white p-2 rounded-md font-semibold hover:bg-blue-700">
