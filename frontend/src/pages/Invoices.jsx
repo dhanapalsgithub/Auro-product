@@ -149,7 +149,8 @@ export default function Invoices() {
             entryList.forEach((e) => {
               totalBrandy += Number(e.brandy_qty || 0);
               totalBeer += Number(e.beer_qty || 0);
-              apiTotalWeight += Number(e.total_weight || e.weight || 0);
+              // Fixed: reading waste_kg from backend response
+              apiTotalWeight += Number(e.waste_kg || e.total_weight || e.weight || 0);
               if (!e.brandy_qty && !e.beer_qty && e.quantity) {
                 totalBrandy += Number(e.quantity);
               }
@@ -160,11 +161,14 @@ export default function Invoices() {
           setBrandyQty(totalBrandy);
           if (apiTotalWeight > 0) {
             setTotalWeight(apiTotalWeight.toFixed(2));
+          } else {
+            setTotalWeight("0.00");
           }
         })
         .catch(() => {
           setBeerQty(0);
           setBrandyQty(0);
+          setTotalWeight("0.00");
         });
     }
   }, [invDate, shopId, modal, editId]);
