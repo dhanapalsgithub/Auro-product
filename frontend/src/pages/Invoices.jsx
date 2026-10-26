@@ -20,34 +20,53 @@ const BEER_BOX_WEIGHT = 0.220;   // 220g
 
 const blankItem = () => ({ description: BOX_TYPES[0] || "Brandy Box (420g)", unit: "PCS", quantity: 1, rate: "" });
 
-// Utility to convert numbers to Indian Rupee Words
+// Fixed Indian Rupee Words Converter
 function numberToWords(num) {
-  if (!num) return "Zero Rupees Only";
+  if (!num || isNaN(num)) return "Zero Rupees Only";
+  const amount = Math.round(num);
+  if (amount === 0) return "Zero Rupees Only";
+
   const a = ['', 'One ', 'Two ', 'Three ', 'Four ', 'Five ', 'Six ', 'Seven ', 'Eight ', 'Nine ', 'Ten ', 'Eleven ', 'Twelve ', 'Thirteen ', 'Fourteen ', 'Fifteen ', 'Sixteen ', 'Seventeen ', 'Eighteen ', 'Nineteen '];
   const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
 
   function inWords(n) {
-    if ((n = n.toString()).length > 9) return 'overflow';
-    let n_arr = ('000000000' + n).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
-    if (!n_arr) return '';
     let str = '';
-    str += (n_arr[1] != 0) ? (a[Number(n_arr[1])] || b[n_arr[1][0]] + ' ' + a[n_arr[1][1]]) + 'Lakh ' : '';
-    str += (n_arr[2] != 0) ? (a[Number(n_arr[2])] || b[n_arr[2][0]] + ' ' + a[n_arr[2][1]]) + 'Thousand ' : '';
-    str += (n_arr[3] != 0) ? (a[Number(n_arr[3])] || b[n_arr[3][0]] + ' ' + a[n_arr[3][1]]) + 'Hundred ' : '';
-    str += (n_arr[4] != 0) ? ((str != '') ? 'and ' : '') + (a[Number(n_arr[4])] || b[n_arr[4][0]] + ' ' + a[n_arr[4][1]]) : '';
+    if (n >= 10000000) {
+      str += inWords(Math.floor(n / 10000000)) + 'Crore ';
+      n %= 10000000;
+    }
+    if (n >= 100000) {
+      str += inWords(Math.floor(n / 100000)) + 'Lakh ';
+      n %= 100000;
+    }
+    if (n >= 1000) {
+      str += inWords(Math.floor(n / 1000)) + 'Thousand ';
+      n %= 1000;
+    }
+    if (n >= 100) {
+      str += inWords(Math.floor(n / 100)) + 'Hundred ';
+      n %= 100;
+    }
+    if (n > 0) {
+      if (str !== '') str += 'and ';
+      if (n < 20) {
+        str += a[n];
+      } else {
+        str += b[Math.floor(n / 10)] + ' ' + a[n % 10];
+      }
+    }
     return str;
   }
-  return inWords(Math.round(num)).trim() + " Rupees Only";
+
+  return inWords(amount).trim() + " Rupees Only";
 }
 
 export default function Invoices() {
   const navigate = useNavigate();
   const [invoices, setInvoices] = useState([]);
   const [companies, setCompanies] = useState([]);
-  const [settings, setSettings] = useState(null);
+  const [settings, setSettings] = useState({ cgst_percent: 2.5, sgst_percent: 2.5 });
   const [activeTab, setActiveTab] = useState("invoices");
-
-  const [canManage] = useState(true);
 
   const [search, setSearch] = useState("");
   const [fromMonth, setFromMonth] = useState("");
@@ -110,12 +129,11 @@ export default function Invoices() {
 
   useEffect(() => {
     api.get("/settings").then((r) => {
-      setSettings(r.data);
-      setItems([{ ...blankItem(), rate: "" }]);
+      if (r.data) setSettings(r.data);
     }).catch(() => {});
   }, []);
 
-  // AUTO-FETCH COTTON BOX ENTRY DATA WHEN DATE OR SHOP CHANGES IN MODAL
+  // Auto-fetch entries
   useEffect(() => {
     if (modal && invDate && !editId) {
       api.get("/entries", { params: { date: invDate, shop_id: shopId || undefined } })
@@ -156,7 +174,7 @@ export default function Invoices() {
   const rows = useMemo(() => safeInvoices.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [safeInvoices, page]);
   const companyList = useMemo(() => companies, [companies]);
 
-  // Waste Calculations
+  // Waste Summary Calculations
   const wasteSummary = useMemo(() => {
     let beerWeight = 0;
     let beerQty = 0;
@@ -184,9 +202,7 @@ export default function Invoices() {
     }
   }, [wasteSummary]);
 
-  // Gross, Waste Addition, Net Taxable & GST
   const grossTaxable = items.reduce((s, it) => s + (Number(it.quantity || 0) * Number(it.rate || 0)), 0);
-  
   const beerWasteValue = wasteSummary.beerQty * Number(beerWasteRate || 0);
   const brandyWasteValue = wasteSummary.brandyQty * Number(brandyWasteRate || 0);
   const totalWasteValue = beerWasteValue + brandyWasteValue;
@@ -303,6 +319,25 @@ export default function Invoices() {
 
     if (clean.length === 0) { toast.error("Add at least one line item with rate"); return; }
 
+    // Include waste items in saved items
+    if (wasteSummary.beerQty > 0) {
+      clean.push({
+        description: `Beer Bottle Cotton Box Waste (${(wasteSummary.beerQty * BEER_BOX_WEIGHT).toFixed(2)} kg)`,
+        quantity: wasteSummary.beerQty,
+        rate: Number(beerWasteRate) || 0,
+        amount: wasteSummary.beerQty * (Number(beerWasteRate) || 0)
+      });
+    }
+
+    if (wasteSummary.brandyQty > 0) {
+      clean.push({
+        description: `Brandy Bottle Cotton Box Waste (${(wasteSummary.brandyQty * BRANDY_BOX_WEIGHT).toFixed(2)} kg)`,
+        quantity: wasteSummary.brandyQty,
+        rate: Number(brandyWasteRate) || 0,
+        amount: wasteSummary.brandyQty * (Number(brandyWasteRate) || 0)
+      });
+    }
+
     setSaving(true);
     try {
       const payload = {
@@ -343,53 +378,31 @@ export default function Invoices() {
     window.print();
   };
 
-  // Helper Component for Single A4 Invoice Copy with Watermark
+  // Dynamically uses saved invoice records so Preview matches Table exactly
   const SingleA4InvoiceBill = ({ copyTitle }) => {
     const rawItems = selectedInvoice?.items || [];
-    let beerItem = rawItems.find(i => i.description.toLowerCase().includes("beer")) || { description: "Beer Bottle Cotton Box (220g)", quantity: 0, rate: 0, amount: 0 };
-    let brandyItem = rawItems.find(i => i.description.toLowerCase().includes("brandy")) || { description: "Brandy Cotton Box (420g)", quantity: 0, rate: 0, amount: 0 };
-
-    const beerQty = Number(beerItem.quantity || 0);
-    const brandyQty = Number(brandyItem.quantity || 0);
-
-    const beerWasteWeight = (beerQty * BEER_BOX_WEIGHT).toFixed(2);
-    const brandyWasteWeight = (brandyQty * BRANDY_BOX_WEIGHT).toFixed(2);
-
-    const displayRows = [
-      { id: 1, desc: "Beer Bottle Cotton Box (220g)", hsn: "4819", qty: beerQty, unit: "PCS", rate: beerItem.rate || 0, amount: beerQty * (beerItem.rate || 0) },
-      { id: 2, desc: "Brandy Cotton Box (420g)", hsn: "4819", qty: brandyQty, unit: "PCS", rate: brandyItem.rate || 0, amount: brandyQty * (brandyItem.rate || 0) },
-      { id: 3, desc: `Beer Bottle Cotton Box Waste (${beerWasteWeight} kg)`, hsn: "4819", qty: beerQty, unit: "PCS", rate: beerWasteRate || 0, amount: beerQty * (Number(beerWasteRate) || 0) },
-      { id: 4, desc: `Brandy Bottle Cotton Box Waste (${brandyWasteWeight} kg)`, hsn: "4819", qty: brandyQty, unit: "PCS", rate: brandyWasteRate || 0, amount: brandyQty * (Number(brandyWasteRate) || 0) },
-    ];
-
-    const grossValue = displayRows.reduce((s, x) => s + x.amount, 0);
-    const netTaxable = grossValue;
+    
+    const grossValue = rawItems.reduce((s, x) => s + Number(x.amount || 0), 0);
+    const netTaxable = selectedInvoice?.taxable_amount ?? grossValue;
     const cgstVal = netTaxable * 0.025;
     const sgstVal = netTaxable * 0.025;
-    const totalPayable = Math.round(netTaxable + cgstVal + sgstVal);
+    const totalPayable = selectedInvoice?.total_amount ?? Math.round(netTaxable + cgstVal + sgstVal);
 
     return (
       <div className="relative border-2 border-slate-900 p-8 text-slate-900 bg-white shadow-md mx-auto w-full max-w-[210mm] min-h-[297mm] flex flex-col justify-between print-page-break print:shadow-none print:border-2 print:m-0">
         
         {/* BACKGROUND WATERMARK LOGO */}
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-5 z-0 select-none">
-          <div className="text-center transform -rotate-12">
-            <div className="w-72 h-72 rounded-full border-[12px] border-slate-900 flex items-center justify-center mx-auto mb-2">
-              <span className="text-8xl font-black tracking-tighter text-slate-900">AP</span>
-            </div>
-            <p className="text-5xl font-black uppercase tracking-widest text-slate-900">AURO PRODUCTS</p>
-          </div>
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-10 z-0 select-none">
+          <img src="/logo4.png" alt="Auro Products Watermark" className="w-[450px] h-[450px] object-contain filter grayscale" />
         </div>
 
-        {/* INVOICE CONTENT OVER WATERMARK */}
+        {/* INVOICE CONTENT */}
         <div className="relative z-10 flex-1 flex flex-col justify-between">
           <div>
-            {/* Header Company Logo Section */}
+            {/* Header Logo */}
             <div className="flex justify-between items-center border-b-2 border-slate-900 pb-4 mb-4">
               <div className="flex items-center gap-4">
-                <div className="w-16 h-16 rounded-full bg-slate-900 text-white flex items-center justify-center font-black text-xl border-2 border-red-600 shrink-0">
-                  AP
-                </div>
+                <img src="/logo4.png" alt="Auro Products Logo" className="w-16 h-16 rounded-full object-cover border-2 border-slate-900 shrink-0 bg-white" />
                 <div>
                   <h1 className="text-3xl font-black tracking-wide text-slate-900 uppercase">AURO PRODUCTS</h1>
                   <p className="text-xs font-semibold text-slate-700">Industrial Area, Tamil Nadu</p>
@@ -403,13 +416,13 @@ export default function Invoices() {
               </div>
             </div>
 
-            {/* Invoice & Bill To Info Grid */}
+            {/* Invoice Info */}
             <div className="grid grid-cols-2 gap-4 border-2 border-slate-900 p-3 mb-4 text-xs bg-slate-50/50">
               <div className="space-y-1">
                 <p><span className="font-bold">Invoice No:</span> <span className="font-mono font-bold text-slate-900">{selectedInvoice.invoice_no}</span></p>
                 <p><span className="font-bold">Invoice Date:</span> {fmtDate(selectedInvoice.invoice_date)}</p>
                 <p><span className="font-bold">Place of Supply:</span> Tamil Nadu (33)</p>
-                <p><span className="font-bold">Total Weight:</span> <span className="font-semibold">{Number(selectedInvoice.waste_kg || 0).toFixed(2)} kg</span></p>
+                <p><span className="font-bold">Total Weight:</span> <span className="font-semibold">{Number(selectedInvoice.waste_kg || selectedInvoice.total_weight || 0).toFixed(2)} kg</span></p>
               </div>
               <div className="space-y-1 border-l-2 pl-4 border-slate-300">
                 <p className="font-bold text-slate-900 underline uppercase text-[11px]">Bill To (Party / Company):</p>
@@ -420,7 +433,7 @@ export default function Invoices() {
               </div>
             </div>
 
-            {/* 4 Line Items Table */}
+            {/* Line Items */}
             <table className="w-full border-2 border-slate-900 text-xs border-collapse mb-4">
               <thead>
                 <tr className="bg-slate-200 border-b-2 border-slate-900 font-bold text-slate-900">
@@ -434,15 +447,15 @@ export default function Invoices() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-300 font-medium">
-                {displayRows.map((r) => (
-                  <tr key={r.id}>
-                    <td className="border-r border-slate-900 p-2 text-center font-mono">{r.id}</td>
-                    <td className="border-r border-slate-900 p-2 font-semibold text-slate-900">{r.desc}</td>
-                    <td className="border-r border-slate-900 p-2 text-center font-mono">{r.hsn}</td>
-                    <td className="border-r border-slate-900 p-2 text-center font-mono">{r.qty}</td>
-                    <td className="border-r border-slate-900 p-2 text-center uppercase">{r.unit}</td>
-                    <td className="border-r border-slate-900 p-2 text-right font-mono">{Number(r.rate).toFixed(2)}</td>
-                    <td className="p-2 text-right font-mono font-bold">{r.amount.toFixed(2)}</td>
+                {rawItems.map((r, idx) => (
+                  <tr key={idx}>
+                    <td className="border-r border-slate-900 p-2 text-center font-mono">{idx + 1}</td>
+                    <td className="border-r border-slate-900 p-2 font-semibold text-slate-900">{r.description}</td>
+                    <td className="border-r border-slate-900 p-2 text-center font-mono">4819</td>
+                    <td className="border-r border-slate-900 p-2 text-center font-mono">{r.quantity}</td>
+                    <td className="border-r border-slate-900 p-2 text-center uppercase">{r.unit || "PCS"}</td>
+                    <td className="border-r border-slate-900 p-2 text-right font-mono">{Number(r.rate || 0).toFixed(2)}</td>
+                    <td className="p-2 text-right font-mono font-bold">{Number(r.amount || 0).toFixed(2)}</td>
                   </tr>
                 ))}
                 
@@ -473,14 +486,14 @@ export default function Invoices() {
               </tbody>
             </table>
 
-            {/* Amount in Words Footer */}
+            {/* Amount in Words */}
             <div className="border-2 border-slate-900 p-3 text-xs font-semibold bg-slate-50 mb-4">
               <span className="font-bold text-slate-900">Amount in Words: </span>
               <span className="italic text-slate-800">{numberToWords(totalPayable)}</span>
             </div>
           </div>
 
-          {/* Bank Details & Signature Footer */}
+          {/* Footer */}
           <div className="grid grid-cols-2 gap-4 border-2 border-slate-900 p-3 text-xs bg-white">
             <div className="space-y-1">
               <p className="font-bold text-slate-900 underline uppercase">Bank Account Details:</p>
@@ -509,7 +522,7 @@ export default function Invoices() {
         </button>
       </PageHeader>
 
-      {/* TOP SUMMARY CARDS */}
+      {/* SUMMARY CARDS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 mb-6">
         <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-cyan-500/10 to-blue-500/5 border-cyan-500/25">
           <div className="p-2.5 rounded-xl bg-cyan-500/20 text-cyan-400 shrink-0"><Building2 className="h-5 w-5" /></div>
@@ -548,7 +561,7 @@ export default function Invoices() {
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Weight</p>
             <p className="text-lg font-bold font-mono text-purple-300">
-              {safeInvoices.reduce((acc, i) => acc + (Number(i.waste_kg) || 0), 0).toFixed(2)} kg
+              {safeInvoices.reduce((acc, i) => acc + (Number(i.waste_kg || i.total_weight) || 0), 0).toFixed(2)} kg
             </p>
           </div>
         </Card>
@@ -598,7 +611,7 @@ export default function Invoices() {
                 </thead>
                 <tbody className="divide-y divide-white/5">
                   {rows.map((i) => {
-                    const totalWaste = Number(i.waste_kg || 0);
+                    const totalWaste = Number(i.waste_kg || i.total_weight || 0);
 
                     return (
                       <tr key={i.id || i._id} className="hover:bg-white/5 transition-colors">
@@ -665,13 +678,13 @@ export default function Invoices() {
         </Card>
       )}
 
-      {/* PRINT PREVIEW MODAL WITH BACK & PRINT OPTIONS AND A4 COPIES */}
+      {/* PRINT PREVIEW MODAL */}
       {viewModal && selectedInvoice && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md overflow-y-auto">
-          <div className="relative w-full max-w-4xl bg-slate-100 text-slate-900 rounded-2xl shadow-2xl p-6 my-6 font-sans border border-slate-300 print:p-0 print:border-none print:shadow-none print:bg-white print:m-0 print:max-w-none">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-6 bg-black/80 backdrop-blur-md overflow-y-auto">
+          <div className="relative w-full max-w-4xl bg-slate-100 text-slate-900 rounded-2xl shadow-2xl my-6 font-sans border border-slate-300 overflow-hidden flex flex-col max-h-[92vh] print:max-h-none print:overflow-visible print:border-none print:shadow-none print:bg-white print:m-0 print:max-w-none">
             
-            {/* Action Bar (Print & Back) - Hidden During Printing */}
-            <div className="flex justify-between items-center mb-6 print:hidden border-b pb-4 bg-white p-4 rounded-xl shadow-xs">
+            {/* Sticky Action Bar */}
+            <div className="sticky top-0 z-30 flex justify-between items-center border-b border-slate-300 bg-white px-6 py-4 shadow-sm print:hidden">
               <button onClick={() => setViewModal(false)} className="flex items-center gap-2 px-4 py-2 bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl hover:bg-slate-300 transition">
                 <ArrowLeft className="h-4 w-4" /> Back to Invoices
               </button>
@@ -683,11 +696,13 @@ export default function Invoices() {
               </div>
             </div>
 
-            {/* A4 INVOICE COPIES WITH WATERMARK LOGO */}
-            <div className="print-single-page space-y-8 print:space-y-0">
-              <SingleA4InvoiceBill copyTitle="ORIGINAL FOR RECIPIENT" />
-              <SingleA4InvoiceBill copyTitle="DUPLICATE FOR TRANSPORTER" />
-              <SingleA4InvoiceBill copyTitle="TRIPLICATE FOR SUPPLIER" />
+            {/* Scrollable Preview */}
+            <div className="overflow-y-auto p-4 sm:p-6 space-y-8 flex-1 print:p-0 print:overflow-visible print:space-y-0">
+              <div className="print-single-page space-y-8 print:space-y-0">
+                <SingleA4InvoiceBill copyTitle="ORIGINAL FOR RECIPIENT" />
+                <SingleA4InvoiceBill copyTitle="DUPLICATE FOR TRANSPORTER" />
+                <SingleA4InvoiceBill copyTitle="TRIPLICATE FOR SUPPLIER" />
+              </div>
             </div>
           </div>
         </div>
@@ -786,14 +801,13 @@ export default function Invoices() {
               </button>
             </div>
 
-            {/* SEPARATE WASTE DEDUCTION ROWS FOR BEER & BRANDY */}
+            {/* Cotton Box Waste */}
             <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-3">
               <div className="flex justify-between items-center font-medium text-amber-900 border-b border-amber-200/60 pb-1.5 text-xs">
                 <span className="flex items-center gap-1.5 font-bold"><Scale className="h-4 w-4 text-amber-600" /> Cotton Box Waste Additions:</span>
                 <span className="font-bold font-mono text-sm">{wasteSummary.totalWeight.toFixed(2)} kg</span>
               </div>
 
-              {/* 1. Beer Bottle Cotton Box Waste Row */}
               <div className="grid grid-cols-12 gap-2 items-center bg-white p-2.5 rounded-lg border border-amber-200/80 shadow-xs text-xs">
                 <div className="col-span-5 font-semibold text-slate-800">
                   Beer Bottle Cotton Box Waste
@@ -816,7 +830,6 @@ export default function Invoices() {
                 </div>
               </div>
 
-              {/* 2. Brandy Cotton Box Waste Row */}
               <div className="grid grid-cols-12 gap-2 items-center bg-white p-2.5 rounded-lg border border-amber-200/80 shadow-xs text-xs">
                 <div className="col-span-5 font-semibold text-slate-800">
                   Brandy Bottle Cotton Box Waste
@@ -857,7 +870,7 @@ export default function Invoices() {
         </div>
       )}
 
-      {/* PRINT CSS SETUP FOR EXACT A4 PAGES */}
+      {/* PRINT CSS */}
       <style>{`
         @media print {
           body * {
