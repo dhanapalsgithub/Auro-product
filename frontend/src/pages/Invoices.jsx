@@ -20,7 +20,6 @@ const BEER_BOX_WEIGHT = 0.220;   // 220g
 
 const blankItem = () => ({ description: BOX_TYPES[0] || "Brandy Box (420g)", unit: "PCS", quantity: 1, rate: "" });
 
-// Fixed Indian Rupee Words Converter
 function numberToWords(num) {
   if (!num || isNaN(num)) return "Zero Rupees Only";
   const amount = Math.round(num);
@@ -76,7 +75,6 @@ export default function Invoices() {
   const [saving, setSaving] = useState(false);
   const [editId, setEditId] = useState(null);
 
-  // View Modal State
   const [viewModal, setViewModal] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
 
@@ -92,13 +90,13 @@ export default function Invoices() {
   const [totalWeight, setTotalWeight] = useState("");
   const [items, setItems] = useState([blankItem()]);
 
-  // Quantities loaded for selected date
   const [beerQty, setBeerQty] = useState(0);
   const [brandyQty, setBrandyQty] = useState(0);
 
-  // User Editable Rates
+  // User Rates
   const [beerRate, setBeerRate] = useState("");
   const [brandyRate, setBrandyRate] = useState("");
+  const [totalWasteRate, setTotalWasteRate] = useState("");
 
   const safeExtractArray = (res) => {
     if (Array.isArray(res?.data)) return res.data;
@@ -137,7 +135,7 @@ export default function Invoices() {
     }).catch(() => {});
   }, []);
 
-  // Auto-fetch entries on date selection
+  // Fetch entries on date selection
   useEffect(() => {
     if (modal && invDate && !editId) {
       api.get("/entries", { params: { date: invDate, shop_id: shopId || undefined } })
@@ -145,11 +143,13 @@ export default function Invoices() {
           const entryList = safeExtractArray(res);
           let totalBrandy = 0;
           let totalBeer = 0;
+          let apiTotalWeight = 0;
 
           if (entryList.length > 0) {
             entryList.forEach((e) => {
               totalBrandy += Number(e.brandy_qty || 0);
               totalBeer += Number(e.beer_qty || 0);
+              apiTotalWeight += Number(e.total_weight || e.weight || 0);
               if (!e.brandy_qty && !e.beer_qty && e.quantity) {
                 totalBrandy += Number(e.quantity);
               }
@@ -158,6 +158,9 @@ export default function Invoices() {
           }
           setBeerQty(totalBeer);
           setBrandyQty(totalBrandy);
+          if (apiTotalWeight > 0) {
+            setTotalWeight(apiTotalWeight.toFixed(2));
+          }
         })
         .catch(() => {
           setBeerQty(0);
@@ -171,20 +174,20 @@ export default function Invoices() {
   const rows = useMemo(() => safeInvoices.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [safeInvoices, page]);
   const companyList = useMemo(() => companies, [companies]);
 
-  // Waste & Weight Calculations
+  // Calculations
   const beerWeight = (beerQty * BEER_BOX_WEIGHT).toFixed(2);
   const brandyWeight = (brandyQty * BRANDY_BOX_WEIGHT).toFixed(2);
-  const calculatedTotalWeight = (Number(beerWeight) + Number(brandyWeight)).toFixed(2);
 
-  useEffect(() => {
-    setTotalWeight(calculatedTotalWeight);
-  }, [calculatedTotalWeight]);
+  // Third row calculations: Total Weight Waste generated that day divided by 0.42
+  const parsedTotalWeight = Number(totalWeight || 0);
+  const totalWasteNos = parsedTotalWeight > 0 ? Math.round(parsedTotalWeight / 0.42) : 0;
 
   const beerTotalAmount = beerQty * (Number(beerRate) || 0);
   const brandyTotalAmount = brandyQty * (Number(brandyRate) || 0);
+  const totalWasteTotalAmount = totalWasteNos * (Number(totalWasteRate) || 0);
 
   const itemsGross = items.reduce((s, it) => s + (Number(it.quantity || 0) * Number(it.rate || 0)), 0);
-  const grossTaxable = itemsGross + beerTotalAmount + brandyTotalAmount;
+  const grossTaxable = itemsGross + beerTotalAmount + brandyTotalAmount + totalWasteTotalAmount;
 
   const cgp = settings?.cgst_percent || 2.5, sgp = settings?.sgst_percent || 2.5;
   const cgst = grossTaxable * cgp / 100, sgst = grossTaxable * sgp / 100;
@@ -236,6 +239,7 @@ export default function Invoices() {
     setTotalWeight("");
     setBeerRate("");
     setBrandyRate("");
+    setTotalWasteRate("");
     setBeerQty(0);
     setBrandyQty(0);
     setItems([{ ...blankItem(), rate: "" }]);
@@ -268,7 +272,7 @@ export default function Invoices() {
     setSupervisor(inv.supervisor || "");
     setContact(inv.contact || inv.mobile || "");
     setTruckNo(inv.truck_no || "");
-    setTotalWeight(inv.total_weight || "");
+    setTotalWeight(inv.total_weight || inv.waste_kg || "");
 
     if (inv.invoice_date) setInvDate(inv.invoice_date.slice(0, 10));
 
@@ -290,29 +294,61 @@ export default function Invoices() {
     e.preventDefault();
     if (!partyName) { toast.error("Enter Party / Company Name"); return; }
 
-    const clean = items.filter((it) => it.quantity !== "" && it.rate !== "").map((it) => ({
-      description: it.description,
-      quantity: Number(it.quantity),
-      rate: Number(it.rate),
-      amount: Number(it.quantity) * Number(it.rate)
-    }));
+    // Prevent duplicate entries by tracking added descriptions
+    const addedDescriptions = new Set();
+    const clean = [];
 
-    if (beerQty > 0) {
-      clean.push({
-        description: `Beer Bottle Cotton Box (${beerWeight} kg)`,
-        quantity: beerQty,
-        rate: Number(beerRate) || 0,
-        amount: beerTotalAmount
-      });
+    items.forEach((it) => {
+      if (it.quantity !== "" && it.rate !== "") {
+        if (!addedDescriptions.has(it.description)) {
+          addedDescriptions.add(it.description);
+          clean.push({
+            description: it.description,
+            quantity: Number(it.quantity),
+            rate: Number(it.rate),
+            amount: Number(it.quantity) * Number(it.rate)
+          });
+        }
+      }
+    });
+
+    if (beerQty > 0 && beerRate !== "") {
+      const desc = `Beer Bottle Cotton Box (${beerWeight} kg)`;
+      if (!addedDescriptions.has(desc)) {
+        addedDescriptions.add(desc);
+        clean.push({
+          description: desc,
+          quantity: beerQty,
+          rate: Number(beerRate) || 0,
+          amount: beerTotalAmount
+        });
+      }
     }
 
-    if (brandyQty > 0) {
-      clean.push({
-        description: `Brandy Bottle Cotton Box (${brandyWeight} kg)`,
-        quantity: brandyQty,
-        rate: Number(brandyRate) || 0,
-        amount: brandyTotalAmount
-      });
+    if (brandyQty > 0 && brandyRate !== "") {
+      const desc = `Brandy Bottle Cotton Box (${brandyWeight} kg)`;
+      if (!addedDescriptions.has(desc)) {
+        addedDescriptions.add(desc);
+        clean.push({
+          description: desc,
+          quantity: brandyQty,
+          rate: Number(brandyRate) || 0,
+          amount: brandyTotalAmount
+        });
+      }
+    }
+
+    if (parsedTotalWeight > 0 && totalWasteRate !== "") {
+      const desc = `Total Weight Waste Generated (${parsedTotalWeight.toFixed(2)} kg)`;
+      if (!addedDescriptions.has(desc)) {
+        addedDescriptions.add(desc);
+        clean.push({
+          description: desc,
+          quantity: totalWasteNos,
+          rate: Number(totalWasteRate) || 0,
+          amount: totalWasteTotalAmount
+        });
+      }
     }
 
     if (clean.length === 0) { toast.error("Add at least one line item with rate"); return; }
@@ -330,8 +366,8 @@ export default function Invoices() {
         invoice_date: new Date(invDate).toISOString(),
         invoice_type: "SALES",
         truck_no: truckNo,
-        total_weight: totalWeight ? Number(totalWeight) : null,
-        waste_kg: Number(calculatedTotalWeight),
+        total_weight: parsedTotalWeight ? Number(parsedTotalWeight) : null,
+        waste_kg: parsedTotalWeight ? Number(parsedTotalWeight) : null,
         items: clean,
         taxable_amount: grossTaxable,
         total_amount: total,
@@ -720,19 +756,19 @@ export default function Invoices() {
               </div>
               <div>
                 <label className="text-xs text-purple-700 font-bold">Total Weight of the Day (kg)</label>
-                <input type="number" step="0.01" min="0" placeholder="Auto Calculated" value={calculatedTotalWeight} readOnly className="mt-1 w-full rounded-lg bg-purple-50 border border-purple-300 py-2.5 px-3 text-sm text-purple-900 font-bold outline-none font-mono" />
+                <input type="number" step="0.01" min="0" placeholder="Auto Loaded" value={totalWeight} onChange={(e) => setTotalWeight(e.target.value)} className="mt-1 w-full rounded-lg bg-purple-50 border border-purple-300 py-2.5 px-3 text-sm text-purple-900 font-bold outline-none font-mono" />
               </div>
             </div>
 
-            {/* DAILY BOTTLE BOX ENTRIES TABLE */}
+            {/* DAILY BOTTLE BOX ENTRIES TABLE WITH 3 ROWS */}
             <div className="mb-4 border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
               <div className="bg-slate-100 px-3 py-2 border-b border-slate-200 font-semibold text-xs text-slate-700 flex justify-between items-center">
                 <span>Daily Box Entries Summary ({invDate})</span>
-                <span className="text-[11px] font-mono text-cyan-700 font-bold">Beer Box: 0.220 kg/box | Brandy Box: 0.420 kg/box</span>
+                <span className="text-[11px] font-mono text-cyan-700 font-bold">Beer: 0.220 | Brandy: 0.420 | Waste: Total Weight ÷ 0.42</span>
               </div>
               
               <div className="p-3 space-y-3">
-                {/* Beer Box Row */}
+                {/* 1st Row: Beer Box */}
                 <div className="grid grid-cols-12 gap-3 items-center bg-white p-2.5 rounded-lg border border-slate-200 shadow-xs">
                   <div className="col-span-12 sm:col-span-3 text-xs font-bold text-slate-800">
                     Beer Box
@@ -751,7 +787,7 @@ export default function Invoices() {
                   </div>
                 </div>
 
-                {/* Brandy Box Row */}
+                {/* 2nd Row: Brandy Box */}
                 <div className="grid grid-cols-12 gap-3 items-center bg-white p-2.5 rounded-lg border border-slate-200 shadow-xs">
                   <div className="col-span-12 sm:col-span-3 text-xs font-bold text-slate-800">
                     Brandy Box
@@ -767,6 +803,25 @@ export default function Invoices() {
                   <div className="col-span-4 sm:col-span-3">
                     <label className="text-[10px] text-slate-500 block font-medium">Rate / Box (₹)</label>
                     <input type="number" step="0.01" placeholder="Enter Rate" value={brandyRate} onChange={(e) => setBrandyRate(e.target.value)} className="w-full rounded-md border border-slate-300 py-1 px-2 text-xs text-slate-800 outline-none focus:border-cyan-500 font-mono" />
+                  </div>
+                </div>
+
+                {/* 3rd Row: Total Weight Waste Generated */}
+                <div className="grid grid-cols-12 gap-3 items-center bg-white p-2.5 rounded-lg border border-slate-200 shadow-xs">
+                  <div className="col-span-12 sm:col-span-3 text-xs font-bold text-slate-800">
+                    Total Weight Waste
+                  </div>
+                  <div className="col-span-4 sm:col-span-3">
+                    <label className="text-[10px] text-slate-500 block">Total Weight</label>
+                    <div className="font-mono text-xs font-semibold text-purple-700">{parsedTotalWeight.toFixed(2)} kg</div>
+                  </div>
+                  <div className="col-span-4 sm:col-span-3">
+                    <label className="text-[10px] text-slate-500 block">Nos (Weight ÷ 0.42)</label>
+                    <div className="font-mono text-xs font-semibold text-slate-800">{totalWasteNos} nos</div>
+                  </div>
+                  <div className="col-span-4 sm:col-span-3">
+                    <label className="text-[10px] text-slate-500 block font-medium">Rate / Box (₹)</label>
+                    <input type="number" step="0.01" placeholder="Enter Rate" value={totalWasteRate} onChange={(e) => setTotalWasteRate(e.target.value)} className="w-full rounded-md border border-slate-300 py-1 px-2 text-xs text-slate-800 outline-none focus:border-cyan-500 font-mono" />
                   </div>
                 </div>
               </div>
