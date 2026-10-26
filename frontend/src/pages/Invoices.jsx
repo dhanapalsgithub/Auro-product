@@ -92,9 +92,13 @@ export default function Invoices() {
   const [totalWeight, setTotalWeight] = useState("");
   const [items, setItems] = useState([blankItem()]);
 
-  // Waste Rates
-  const [beerWasteRate, setBeerWasteRate] = useState("");
-  const [brandyWasteRate, setBrandyWasteRate] = useState("");
+  // Quantities loaded for selected date
+  const [beerQty, setBeerQty] = useState(0);
+  const [brandyQty, setBrandyQty] = useState(0);
+
+  // User Editable Rates
+  const [beerRate, setBeerRate] = useState("");
+  const [brandyRate, setBrandyRate] = useState("");
 
   const safeExtractArray = (res) => {
     if (Array.isArray(res?.data)) return res.data;
@@ -133,16 +137,16 @@ export default function Invoices() {
     }).catch(() => {});
   }, []);
 
-  // Auto-fetch entries
+  // Auto-fetch entries on date selection
   useEffect(() => {
     if (modal && invDate && !editId) {
       api.get("/entries", { params: { date: invDate, shop_id: shopId || undefined } })
         .then((res) => {
           const entryList = safeExtractArray(res);
+          let totalBrandy = 0;
+          let totalBeer = 0;
+
           if (entryList.length > 0) {
-            let totalBrandy = 0;
-            let totalBeer = 0;
-            
             entryList.forEach((e) => {
               totalBrandy += Number(e.brandy_qty || 0);
               totalBeer += Number(e.beer_qty || 0);
@@ -150,22 +154,15 @@ export default function Invoices() {
                 totalBrandy += Number(e.quantity);
               }
             });
-
-            const newItems = [];
-            if (totalBeer > 0) {
-              newItems.push({ description: "Beer Bottle Cotton Box (220g)", unit: "PCS", quantity: totalBeer, rate: "" });
-            }
-            if (totalBrandy > 0) {
-              newItems.push({ description: "Brandy Cotton Box (420g)", unit: "PCS", quantity: totalBrandy, rate: "" });
-            }
-
-            if (newItems.length > 0) {
-              setItems(newItems);
-              toast.success(`Loaded cotton box entries for ${invDate}`);
-            }
+            toast.success(`Loaded box entries for ${invDate}`);
           }
+          setBeerQty(totalBeer);
+          setBrandyQty(totalBrandy);
         })
-        .catch(() => {});
+        .catch(() => {
+          setBeerQty(0);
+          setBrandyQty(0);
+        });
     }
   }, [invDate, shopId, modal, editId]);
 
@@ -174,43 +171,24 @@ export default function Invoices() {
   const rows = useMemo(() => safeInvoices.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [safeInvoices, page]);
   const companyList = useMemo(() => companies, [companies]);
 
-  // Waste Summary Calculations
-  const wasteSummary = useMemo(() => {
-    let beerWeight = 0;
-    let beerQty = 0;
-    let brandyWeight = 0;
-    let brandyQty = 0;
-
-    items.forEach((it) => {
-      const desc = (it.description || "").toLowerCase();
-      const qty = Number(it.quantity || 0);
-      if (desc.includes("beer")) {
-        beerQty += qty;
-        beerWeight += qty * BEER_BOX_WEIGHT;
-      } else if (desc.includes("brandy")) {
-        brandyQty += qty;
-        brandyWeight += qty * BRANDY_BOX_WEIGHT;
-      }
-    });
-
-    return { beerQty, beerWeight, brandyQty, brandyWeight, totalWeight: beerWeight + brandyWeight };
-  }, [items]);
+  // Waste & Weight Calculations
+  const beerWeight = (beerQty * BEER_BOX_WEIGHT).toFixed(2);
+  const brandyWeight = (brandyQty * BRANDY_BOX_WEIGHT).toFixed(2);
+  const calculatedTotalWeight = (Number(beerWeight) + Number(brandyWeight)).toFixed(2);
 
   useEffect(() => {
-    if (wasteSummary.totalWeight > 0) {
-      setTotalWeight(wasteSummary.totalWeight.toFixed(2));
-    }
-  }, [wasteSummary]);
+    setTotalWeight(calculatedTotalWeight);
+  }, [calculatedTotalWeight]);
 
-  const grossTaxable = items.reduce((s, it) => s + (Number(it.quantity || 0) * Number(it.rate || 0)), 0);
-  const beerWasteValue = wasteSummary.beerQty * Number(beerWasteRate || 0);
-  const brandyWasteValue = wasteSummary.brandyQty * Number(brandyWasteRate || 0);
-  const totalWasteValue = beerWasteValue + brandyWasteValue;
+  const beerTotalAmount = beerQty * (Number(beerRate) || 0);
+  const brandyTotalAmount = brandyQty * (Number(brandyRate) || 0);
 
-  const taxable = grossTaxable + totalWasteValue;
+  const itemsGross = items.reduce((s, it) => s + (Number(it.quantity || 0) * Number(it.rate || 0)), 0);
+  const grossTaxable = itemsGross + beerTotalAmount + brandyTotalAmount;
+
   const cgp = settings?.cgst_percent || 2.5, sgp = settings?.sgst_percent || 2.5;
-  const cgst = taxable * cgp / 100, sgst = taxable * sgp / 100;
-  const total = Math.round(taxable + cgst + sgst);
+  const cgst = grossTaxable * cgp / 100, sgst = grossTaxable * sgp / 100;
+  const total = Math.round(grossTaxable + cgst + sgst);
 
   const addItem = () => setItems((arr) => [...arr, { ...blankItem(), rate: "" }]);
   const removeItem = (i) => setItems((arr) => arr.length === 1 ? arr : arr.filter((_, idx) => idx !== i));
@@ -256,8 +234,10 @@ export default function Invoices() {
     setInvDate(new Date().toISOString().slice(0, 10));
     setTruckNo("");
     setTotalWeight("");
-    setBeerWasteRate("");
-    setBrandyWasteRate("");
+    setBeerRate("");
+    setBrandyRate("");
+    setBeerQty(0);
+    setBrandyQty(0);
     setItems([{ ...blankItem(), rate: "" }]);
 
     if (safeInvoices.length > 0) {
@@ -317,26 +297,25 @@ export default function Invoices() {
       amount: Number(it.quantity) * Number(it.rate)
     }));
 
+    if (beerQty > 0) {
+      clean.push({
+        description: `Beer Bottle Cotton Box (${beerWeight} kg)`,
+        quantity: beerQty,
+        rate: Number(beerRate) || 0,
+        amount: beerTotalAmount
+      });
+    }
+
+    if (brandyQty > 0) {
+      clean.push({
+        description: `Brandy Bottle Cotton Box (${brandyWeight} kg)`,
+        quantity: brandyQty,
+        rate: Number(brandyRate) || 0,
+        amount: brandyTotalAmount
+      });
+    }
+
     if (clean.length === 0) { toast.error("Add at least one line item with rate"); return; }
-
-    // Include waste items in saved items
-    if (wasteSummary.beerQty > 0) {
-      clean.push({
-        description: `Beer Bottle Cotton Box Waste (${(wasteSummary.beerQty * BEER_BOX_WEIGHT).toFixed(2)} kg)`,
-        quantity: wasteSummary.beerQty,
-        rate: Number(beerWasteRate) || 0,
-        amount: wasteSummary.beerQty * (Number(beerWasteRate) || 0)
-      });
-    }
-
-    if (wasteSummary.brandyQty > 0) {
-      clean.push({
-        description: `Brandy Bottle Cotton Box Waste (${(wasteSummary.brandyQty * BRANDY_BOX_WEIGHT).toFixed(2)} kg)`,
-        quantity: wasteSummary.brandyQty,
-        rate: Number(brandyWasteRate) || 0,
-        amount: wasteSummary.brandyQty * (Number(brandyWasteRate) || 0)
-      });
-    }
 
     setSaving(true);
     try {
@@ -352,9 +331,9 @@ export default function Invoices() {
         invoice_type: "SALES",
         truck_no: truckNo,
         total_weight: totalWeight ? Number(totalWeight) : null,
-        waste_kg: Number(wasteSummary.totalWeight.toFixed(2)),
+        waste_kg: Number(calculatedTotalWeight),
         items: clean,
-        taxable_amount: taxable,
+        taxable_amount: grossTaxable,
         total_amount: total,
       };
 
@@ -378,28 +357,21 @@ export default function Invoices() {
     window.print();
   };
 
-  // Dynamically uses saved invoice records so Preview matches Table exactly
   const SingleA4InvoiceBill = ({ copyTitle }) => {
     const rawItems = selectedInvoice?.items || [];
-    
-    const grossValue = rawItems.reduce((s, x) => s + Number(x.amount || 0), 0);
-    const netTaxable = selectedInvoice?.taxable_amount ?? grossValue;
+    const netTaxable = selectedInvoice?.taxable_amount ?? 0;
     const cgstVal = netTaxable * 0.025;
     const sgstVal = netTaxable * 0.025;
     const totalPayable = selectedInvoice?.total_amount ?? Math.round(netTaxable + cgstVal + sgstVal);
 
     return (
       <div className="relative border-2 border-slate-900 p-8 text-slate-900 bg-white shadow-md mx-auto w-full max-w-[210mm] min-h-[297mm] flex flex-col justify-between print-page-break print:shadow-none print:border-2 print:m-0">
-        
-        {/* BACKGROUND WATERMARK LOGO */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-10 z-0 select-none">
           <img src="/logo4.png" alt="Auro Products Watermark" className="w-[450px] h-[450px] object-contain filter grayscale" />
         </div>
 
-        {/* INVOICE CONTENT */}
         <div className="relative z-10 flex-1 flex flex-col justify-between">
           <div>
-            {/* Header Logo */}
             <div className="flex justify-between items-center border-b-2 border-slate-900 pb-4 mb-4">
               <div className="flex items-center gap-4">
                 <img src="/logo4.png" alt="Auro Products Logo" className="w-16 h-16 rounded-full object-cover border-2 border-slate-900 shrink-0 bg-white" />
@@ -416,7 +388,6 @@ export default function Invoices() {
               </div>
             </div>
 
-            {/* Invoice Info */}
             <div className="grid grid-cols-2 gap-4 border-2 border-slate-900 p-3 mb-4 text-xs bg-slate-50/50">
               <div className="space-y-1">
                 <p><span className="font-bold">Invoice No:</span> <span className="font-mono font-bold text-slate-900">{selectedInvoice.invoice_no}</span></p>
@@ -433,7 +404,6 @@ export default function Invoices() {
               </div>
             </div>
 
-            {/* Line Items */}
             <table className="w-full border-2 border-slate-900 text-xs border-collapse mb-4">
               <thead>
                 <tr className="bg-slate-200 border-b-2 border-slate-900 font-bold text-slate-900">
@@ -459,11 +429,6 @@ export default function Invoices() {
                   </tr>
                 ))}
                 
-                <tr className="border-t-2 border-slate-900 bg-slate-50 font-bold">
-                  <td colSpan={6} className="border-r border-slate-900 p-2 text-right">Gross Item Value</td>
-                  <td className="p-2 text-right font-mono">₹{grossValue.toFixed(2)}</td>
-                </tr>
-
                 <tr className="border-t border-slate-900 font-bold bg-slate-100">
                   <td colSpan={6} className="border-r border-slate-900 p-2 text-right">Net Taxable Value</td>
                   <td className="p-2 text-right font-mono">₹{netTaxable.toFixed(2)}</td>
@@ -486,14 +451,12 @@ export default function Invoices() {
               </tbody>
             </table>
 
-            {/* Amount in Words */}
             <div className="border-2 border-slate-900 p-3 text-xs font-semibold bg-slate-50 mb-4">
               <span className="font-bold text-slate-900">Amount in Words: </span>
               <span className="italic text-slate-800">{numberToWords(totalPayable)}</span>
             </div>
           </div>
 
-          {/* Footer */}
           <div className="grid grid-cols-2 gap-4 border-2 border-slate-900 p-3 text-xs bg-white">
             <div className="space-y-1">
               <p className="font-bold text-slate-900 underline uppercase">Bank Account Details:</p>
@@ -682,8 +645,6 @@ export default function Invoices() {
       {viewModal && selectedInvoice && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-6 bg-black/80 backdrop-blur-md overflow-y-auto">
           <div className="relative w-full max-w-4xl bg-slate-100 text-slate-900 rounded-2xl shadow-2xl my-6 font-sans border border-slate-300 overflow-hidden flex flex-col max-h-[92vh] print:max-h-none print:overflow-visible print:border-none print:shadow-none print:bg-white print:m-0 print:max-w-none">
-            
-            {/* Sticky Action Bar */}
             <div className="sticky top-0 z-30 flex justify-between items-center border-b border-slate-300 bg-white px-6 py-4 shadow-sm print:hidden">
               <button onClick={() => setViewModal(false)} className="flex items-center gap-2 px-4 py-2 bg-slate-200 text-slate-800 text-xs font-semibold rounded-xl hover:bg-slate-300 transition">
                 <ArrowLeft className="h-4 w-4" /> Back to Invoices
@@ -696,7 +657,6 @@ export default function Invoices() {
               </div>
             </div>
 
-            {/* Scrollable Preview */}
             <div className="overflow-y-auto p-4 sm:p-6 space-y-8 flex-1 print:p-0 print:overflow-visible print:space-y-0">
               <div className="print-single-page space-y-8 print:space-y-0">
                 <SingleA4InvoiceBill copyTitle="ORIGINAL FOR RECIPIENT" />
@@ -712,7 +672,7 @@ export default function Invoices() {
       {modal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setModal(false)} />
-          <form onSubmit={saveInvoice} className="glass relative z-10 w-full max-w-2xl rounded-2xl p-6 max-h-[90vh] overflow-y-auto text-slate-800 bg-white shadow-xl border border-slate-200">
+          <form onSubmit={saveInvoice} className="glass relative z-10 w-full max-w-3xl rounded-2xl p-6 max-h-[90vh] overflow-y-auto text-slate-800 bg-white shadow-xl border border-slate-200">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-display text-lg font-semibold text-slate-900">{editId ? "Edit Sale Invoice" : "New Sale Invoice"}</h3>
               <button type="button" onClick={() => setModal(false)}><X className="h-5 w-5 text-slate-500 hover:text-slate-700" /></button>
@@ -751,7 +711,7 @@ export default function Invoices() {
 
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
               <div>
-                <label className="text-xs text-cyan-700 font-bold">Invoice Date (Select Date)</label>
+                <label className="text-xs text-cyan-700 font-bold">Select Date (Auto Load Entries)</label>
                 <input type="date" value={invDate} onChange={(e) => setInvDate(e.target.value)} className="mt-1 w-full rounded-lg bg-cyan-50 border border-cyan-300 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 font-semibold" />
               </div>
               <div>
@@ -759,105 +719,85 @@ export default function Invoices() {
                 <input type="text" placeholder="TN 01 AB 1234" value={truckNo} onChange={(e) => setTruckNo(e.target.value)} className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
               </div>
               <div>
-                <label className="text-xs text-slate-600 font-medium">Total Weight (kg)</label>
-                <input type="number" step="0.01" min="0" placeholder="Auto Calculated" value={totalWeight} onChange={(e) => setTotalWeight(e.target.value)} className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400 font-semibold" />
+                <label className="text-xs text-purple-700 font-bold">Total Weight of the Day (kg)</label>
+                <input type="number" step="0.01" min="0" placeholder="Auto Calculated" value={calculatedTotalWeight} readOnly className="mt-1 w-full rounded-lg bg-purple-50 border border-purple-300 py-2.5 px-3 text-sm text-purple-900 font-bold outline-none font-mono" />
+              </div>
+            </div>
+
+            {/* DAILY BOTTLE BOX ENTRIES TABLE */}
+            <div className="mb-4 border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
+              <div className="bg-slate-100 px-3 py-2 border-b border-slate-200 font-semibold text-xs text-slate-700 flex justify-between items-center">
+                <span>Daily Box Entries Summary ({invDate})</span>
+                <span className="text-[11px] font-mono text-cyan-700 font-bold">Beer Box: 0.220 kg/box | Brandy Box: 0.420 kg/box</span>
+              </div>
+              
+              <div className="p-3 space-y-3">
+                {/* Beer Box Row */}
+                <div className="grid grid-cols-12 gap-3 items-center bg-white p-2.5 rounded-lg border border-slate-200 shadow-xs">
+                  <div className="col-span-12 sm:col-span-3 text-xs font-bold text-slate-800">
+                    Beer Box
+                  </div>
+                  <div className="col-span-4 sm:col-span-3">
+                    <label className="text-[10px] text-slate-500 block">Weight (0.220 x nos)</label>
+                    <div className="font-mono text-xs font-semibold text-cyan-700">{beerWeight} kg</div>
+                  </div>
+                  <div className="col-span-4 sm:col-span-3">
+                    <label className="text-[10px] text-slate-500 block">Nos (Qty)</label>
+                    <div className="font-mono text-xs font-semibold text-slate-800">{beerQty} nos</div>
+                  </div>
+                  <div className="col-span-4 sm:col-span-3">
+                    <label className="text-[10px] text-slate-500 block font-medium">Rate / Box (₹)</label>
+                    <input type="number" step="0.01" placeholder="Enter Rate" value={beerRate} onChange={(e) => setBeerRate(e.target.value)} className="w-full rounded-md border border-slate-300 py-1 px-2 text-xs text-slate-800 outline-none focus:border-cyan-500 font-mono" />
+                  </div>
+                </div>
+
+                {/* Brandy Box Row */}
+                <div className="grid grid-cols-12 gap-3 items-center bg-white p-2.5 rounded-lg border border-slate-200 shadow-xs">
+                  <div className="col-span-12 sm:col-span-3 text-xs font-bold text-slate-800">
+                    Brandy Box
+                  </div>
+                  <div className="col-span-4 sm:col-span-3">
+                    <label className="text-[10px] text-slate-500 block">Weight (0.420 x nos)</label>
+                    <div className="font-mono text-xs font-semibold text-cyan-700">{brandyWeight} kg</div>
+                  </div>
+                  <div className="col-span-4 sm:col-span-3">
+                    <label className="text-[10px] text-slate-500 block">Nos (Qty)</label>
+                    <div className="font-mono text-xs font-semibold text-slate-800">{brandyQty} nos</div>
+                  </div>
+                  <div className="col-span-4 sm:col-span-3">
+                    <label className="text-[10px] text-slate-500 block font-medium">Rate / Box (₹)</label>
+                    <input type="number" step="0.01" placeholder="Enter Rate" value={brandyRate} onChange={(e) => setBrandyRate(e.target.value)} className="w-full rounded-md border border-slate-300 py-1 px-2 text-xs text-slate-800 outline-none focus:border-cyan-500 font-mono" />
+                  </div>
+                </div>
               </div>
             </div>
 
             <div className="flex justify-between items-center mb-1">
-              <label className="text-xs text-slate-600 font-medium">Line Items (Auto-loaded from Cotton Box Entries for selected date)</label>
-            </div>
-            <div className="space-y-2">
-              {items.map((it, i) => {
-                const isBeer = (it.description || "").toLowerCase().includes("beer");
-                const isBrandy = (it.description || "").toLowerCase().includes("brandy");
-                const perBoxWeight = isBeer ? BEER_BOX_WEIGHT : isBrandy ? BRANDY_BOX_WEIGHT : 0;
-                const calcWeight = (Number(it.quantity || 0) * perBoxWeight).toFixed(2);
-
-                return (
-                  <div key={i} className="flex flex-col gap-1 border border-slate-200 p-2 rounded-lg bg-slate-50">
-                    <div className="grid grid-cols-12 gap-2 items-center">
-                      <select value={BOX_TYPES.includes(it.description) ? it.description : ""} onChange={(e) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x))}
-                        className="col-span-5 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500">
-                        {BOX_TYPES.map((t) => <option key={t} value={t} className="bg-white text-slate-800">{t}</option>)}
-                      </select>
-                      <input type="number" min="1" value={it.quantity} onChange={(e) => setItems(arr => arr.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x))} placeholder="Box Qty"
-                        className="col-span-3 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
-                      <input type="number" step="0.01" value={it.rate} onChange={(e) => setItems(arr => arr.map((x, idx) => idx === i ? { ...x, rate: e.target.value } : x))} placeholder="Rate / Box (₹)"
-                        className="col-span-3 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
-                      <button type="button" onClick={() => removeItem(i)} className="col-span-1 p-2 text-red-500 hover:text-red-700 flex justify-center"><Trash2 className="h-4 w-4" /></button>
-                    </div>
-                    {perBoxWeight > 0 && (
-                      <div className="text-[11px] text-cyan-700 font-medium px-1 flex justify-between">
-                        <span className="font-semibold">{calcWeight} kg ({it.quantity || 0} nos × {perBoxWeight} kg)</span>
-                        <span>Default Weight: {perBoxWeight * 1000}g / box</span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {/* <button type="button" onClick={addItem} className="text-xs font-semibold text-cyan-600 hover:text-cyan-700 flex items-center gap-1 mt-2">
-                <Plus className="h-3.5 w-3.5" /> Add Line Item
+              <label className="text-xs text-slate-600 font-medium">Additional Custom Line Items</label>
+              <button type="button" onClick={addItem} className="text-xs font-semibold text-cyan-600 hover:text-cyan-700 flex items-center gap-1">
+                <Plus className="h-3.5 w-3.5" /> Add Item
               </button>
             </div>
 
-           
-            <div className="mt-4 p-3 bg-amber-50 border border-amber-200 rounded-xl space-y-3">
-              <div className="flex justify-between items-center font-medium text-amber-900 border-b border-amber-200/60 pb-1.5 text-xs">
-                <span className="flex items-center gap-1.5 font-bold"><Scale className="h-4 w-4 text-amber-600" /> Cotton Box Waste Additions:</span>
-                <span className="font-bold font-mono text-sm">{wasteSummary.totalWeight.toFixed(2)} kg</span>
-              </div> */}
-
-              <div className="grid grid-cols-12 gap-2 items-center bg-white p-2.5 rounded-lg border border-amber-200/80 shadow-xs text-xs">
-                <div className="col-span-5 font-semibold text-slate-800">
-                  Beer Bottle Cotton Box Waste
-                  <span className="block text-[11px] font-mono text-cyan-700 font-medium">
-                    {wasteSummary.beerWeight.toFixed(2)} kg ({wasteSummary.beerQty} nos)
-                  </span>
+            <div className="space-y-2">
+              {items.map((it, i) => (
+                <div key={i} className="grid grid-cols-12 gap-2 items-center border border-slate-200 p-2 rounded-lg bg-slate-50">
+                  <select value={BOX_TYPES.includes(it.description) ? it.description : ""} onChange={(e) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x))}
+                    className="col-span-5 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500">
+                    {BOX_TYPES.map((t) => <option key={t} value={t} className="bg-white text-slate-800">{t}</option>)}
+                  </select>
+                  <input type="number" min="1" value={it.quantity} onChange={(e) => setItems(arr => arr.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x))} placeholder="Qty"
+                    className="col-span-3 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 placeholder:text-slate-400" />
+                  <input type="number" step="0.01" value={it.rate} onChange={(e) => setItems(arr => arr.map((x, idx) => idx === i ? { ...x, rate: e.target.value } : x))} placeholder="Rate (₹)"
+                    className="col-span-3 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 placeholder:text-slate-400" />
+                  <button type="button" onClick={() => removeItem(i)} className="col-span-1 p-2 text-red-500 hover:text-red-700 flex justify-center"><Trash2 className="h-4 w-4" /></button>
                 </div>
-                <div className="col-span-3 text-slate-600 font-mono text-center">
-                  {wasteSummary.beerQty} nos
-                </div>
-                <div className="col-span-4">
-                  <input
-                    type="number"
-                    step="0.01"
-                    placeholder="Rate / Box (₹)"
-                    value={beerWasteRate}
-                    onChange={(e) => setBeerWasteRate(e.target.value)}
-                    className="w-full rounded-lg bg-amber-50/50 border border-amber-300 py-1.5 px-2.5 text-xs text-slate-800 outline-none focus:border-amber-500 font-mono"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-12 gap-2 items-center bg-white p-2.5 rounded-lg border border-amber-200/80 shadow-xs text-xs">
-                <div className="col-span-5 font-semibold text-slate-800">
-                  Brandy Bottle Cotton Box Waste
-                  <span className="block text-[11px] font-mono text-cyan-700 font-medium">
-                    {wasteSummary.brandyWeight.toFixed(2)} kg ({wasteSummary.brandyQty} nos)
-                  </span>
-                </div>
-                <div className="col-span-3 text-slate-600 font-mono text-center">
-                  {wasteSummary.brandyQty} nos
-                </div>
-                <div className="col-span-4">
-                  <input
-                    type="number"
-                    step="0.01"
-                    placeholder="Rate / Box (₹)"
-                    value={brandyWasteRate}
-                    onChange={(e) => setBrandyWasteRate(e.target.value)}
-                    className="w-full rounded-lg bg-amber-50/50 border border-amber-300 py-1.5 px-2.5 text-xs text-slate-800 outline-none focus:border-amber-500 font-mono"
-                  />
-                </div>
-              </div>
+              ))}
             </div>
 
             {/* BILLING BREAKDOWN */}
             <div className="mt-4 pt-3 border-t border-slate-200 text-xs space-y-1">
-              <div className="flex justify-between text-slate-600"><span>Gross Taxable Amount</span><span>₹{grossTaxable.toFixed(2)}</span></div>
-              <div className="flex justify-between text-cyan-700 font-medium"><span>Add Waste Value</span><span>+ ₹{totalWasteValue.toFixed(2)}</span></div>
-              <div className="flex justify-between font-bold text-slate-800 border-t pt-1"><span>Net Taxable Amount</span><span>₹{taxable.toFixed(2)}</span></div>
+              <div className="flex justify-between font-bold text-slate-800 border-b pb-1"><span>Net Taxable Amount</span><span>₹{grossTaxable.toFixed(2)}</span></div>
               <div className="flex justify-between text-slate-600"><span>CGST ({cgp}%)</span><span>₹{cgst.toFixed(2)}</span></div>
               <div className="flex justify-between text-slate-600"><span>SGST ({sgp}%)</span><span>₹{sgst.toFixed(2)}</span></div>
               <div className="flex justify-between font-bold text-sm text-slate-900 pt-1 border-t border-slate-200"><span>Grand Total</span><span>₹{total.toFixed(2)}</span></div>
