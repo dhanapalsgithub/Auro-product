@@ -93,10 +93,10 @@ export default function Invoices() {
   const [beerQty, setBeerQty] = useState(0);
   const [brandyQty, setBrandyQty] = useState(0);
 
-  // User Rates
-  const [beerRate, setBeerRate] = useState("");
-  const [brandyRate, setBrandyRate] = useState("");
-  const [totalWasteRate, setTotalWasteRate] = useState("");
+  // User Rates per KG
+  const [beerRateKg, setBeerRateKg] = useState("");
+  const [brandyRateKg, setBrandyRateKg] = useState("");
+  const [totalWasteRateKg, setTotalWasteRateKg] = useState("");
 
   const safeExtractArray = (res) => {
     if (Array.isArray(res?.data)) return res.data;
@@ -149,7 +149,6 @@ export default function Invoices() {
             entryList.forEach((e) => {
               totalBrandy += Number(e.brandy_qty || 0);
               totalBeer += Number(e.beer_qty || 0);
-              // Fixed: reading waste_kg from backend response
               apiTotalWeight += Number(e.waste_kg || e.total_weight || e.weight || 0);
               if (!e.brandy_qty && !e.beer_qty && e.quantity) {
                 totalBrandy += Number(e.quantity);
@@ -178,17 +177,16 @@ export default function Invoices() {
   const rows = useMemo(() => safeInvoices.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [safeInvoices, page]);
   const companyList = useMemo(() => companies, [companies]);
 
-  // Calculations
-  const beerWeight = (beerQty * BEER_BOX_WEIGHT).toFixed(2);
-  const brandyWeight = (brandyQty * BRANDY_BOX_WEIGHT).toFixed(2);
-
-  // Third row calculations: Total Weight Waste generated that day divided by 0.42
+  // Weight Calculations
+  const parsedBeerWeight = Number((beerQty * BEER_BOX_WEIGHT).toFixed(2));
+  const parsedBrandyWeight = Number((brandyQty * BRANDY_BOX_WEIGHT).toFixed(2));
   const parsedTotalWeight = Number(totalWeight || 0);
   const totalWasteNos = parsedTotalWeight > 0 ? Math.round(parsedTotalWeight / 0.42) : 0;
 
-  const beerTotalAmount = beerQty * (Number(beerRate) || 0);
-  const brandyTotalAmount = brandyQty * (Number(brandyRate) || 0);
-  const totalWasteTotalAmount = totalWasteNos * (Number(totalWasteRate) || 0);
+  // Amount Calculations (All based on Weight (kg) * Rate / kg)
+  const beerTotalAmount = parsedBeerWeight * (Number(beerRateKg) || 0);
+  const brandyTotalAmount = parsedBrandyWeight * (Number(brandyRateKg) || 0);
+  const totalWasteTotalAmount = parsedTotalWeight * (Number(totalWasteRateKg) || 0);
 
   const itemsGross = items.reduce((s, it) => s + (Number(it.quantity || 0) * Number(it.rate || 0)), 0);
   const grossTaxable = itemsGross + beerTotalAmount + brandyTotalAmount + totalWasteTotalAmount;
@@ -241,9 +239,9 @@ export default function Invoices() {
     setInvDate(new Date().toISOString().slice(0, 10));
     setTruckNo("");
     setTotalWeight("");
-    setBeerRate("");
-    setBrandyRate("");
-    setTotalWasteRate("");
+    setBeerRateKg("");
+    setBrandyRateKg("");
+    setTotalWasteRateKg("");
     setBeerQty(0);
     setBrandyQty(0);
     setItems([{ ...blankItem(), rate: "" }]);
@@ -284,7 +282,7 @@ export default function Invoices() {
       setItems(inv.items.map(it => ({
         description: it.description || BOX_TYPES[0],
         unit: it.unit || "PCS",
-        quantity: it.quantity || 1,
+        quantity: Math.round(Number(it.quantity || 1)),
         rate: it.rate || ""
       })));
     } else {
@@ -298,7 +296,6 @@ export default function Invoices() {
     e.preventDefault();
     if (!partyName) { toast.error("Enter Party / Company Name"); return; }
 
-    // Prevent duplicate entries by tracking added descriptions
     const addedDescriptions = new Set();
     const clean = [];
 
@@ -308,7 +305,7 @@ export default function Invoices() {
           addedDescriptions.add(it.description);
           clean.push({
             description: it.description,
-            quantity: Number(it.quantity),
+            quantity: Math.round(Number(it.quantity)),
             rate: Number(it.rate),
             amount: Number(it.quantity) * Number(it.rate)
           });
@@ -316,41 +313,44 @@ export default function Invoices() {
       }
     });
 
-    if (beerQty > 0 && beerRate !== "") {
-      const desc = `Beer Bottle Cotton Box (${beerWeight} kg)`;
+    if (parsedBeerWeight > 0 && beerRateKg !== "") {
+      const desc = `Beer Bottle Cotton Box (${beerQty} nos)`;
       if (!addedDescriptions.has(desc)) {
         addedDescriptions.add(desc);
         clean.push({
           description: desc,
-          quantity: beerQty,
-          rate: Number(beerRate) || 0,
-          amount: beerTotalAmount
+          quantity: Number(beerQty),
+          rate: Number(beerRateKg) || 0,
+          amount: beerTotalAmount,
+          unit: "PCS"
         });
       }
     }
 
-    if (brandyQty > 0 && brandyRate !== "") {
-      const desc = `Brandy Bottle Cotton Box (${brandyWeight} kg)`;
+    if (parsedBrandyWeight > 0 && brandyRateKg !== "") {
+      const desc = `Brandy Bottle Cotton Box (${brandyQty} nos)`;
       if (!addedDescriptions.has(desc)) {
         addedDescriptions.add(desc);
         clean.push({
           description: desc,
-          quantity: brandyQty,
-          rate: Number(brandyRate) || 0,
-          amount: brandyTotalAmount
+          quantity: Number(brandyQty),
+          rate: Number(brandyRateKg) || 0,
+          amount: brandyTotalAmount,
+          unit: "PCS"
         });
       }
     }
 
-    if (parsedTotalWeight > 0 && totalWasteRate !== "") {
-      const desc = `Total Weight Waste Generated (${parsedTotalWeight.toFixed(2)} kg)`;
+    if (parsedTotalWeight > 0 && totalWasteRateKg !== "") {
+      const desc = `Total Weight Waste Generated (${totalWasteNos} nos)`;
       if (!addedDescriptions.has(desc)) {
         addedDescriptions.add(desc);
         clean.push({
           description: desc,
-          quantity: totalWasteNos,
-          rate: Number(totalWasteRate) || 0,
-          amount: totalWasteTotalAmount
+          quantity: Number(totalWasteNos),
+          rate: Number(totalWasteRateKg) || 0,
+          amount: totalWasteTotalAmount,
+          unit: "PCS"
         });
       }
     }
@@ -360,7 +360,7 @@ export default function Invoices() {
     setSaving(true);
     try {
       const payload = {
-        invoice_no: invoiceNo || "AP-INV-00001",
+        invoice_no: invoiceNo || undefined,
         shop_id: shopId ? Number(shopId) : null,
         party_name: partyName,
         customer_name: partyName,
@@ -759,16 +759,16 @@ export default function Invoices() {
                 <input type="text" placeholder="TN 01 AB 1234" value={truckNo} onChange={(e) => setTruckNo(e.target.value)} className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
               </div>
               <div>
-                <label className="text-xs text-purple-700 font-bold">Total Weight of the Day (kg)</label>
+                <label className="text-xs text-purple-700 font-bold">Total waste Weight of the Day (kg)</label>
                 <input type="number" step="0.01" min="0" placeholder="Auto Loaded" value={totalWeight} onChange={(e) => setTotalWeight(e.target.value)} className="mt-1 w-full rounded-lg bg-purple-50 border border-purple-300 py-2.5 px-3 text-sm text-purple-900 font-bold outline-none font-mono" />
               </div>
             </div>
 
-            {/* DAILY BOTTLE BOX ENTRIES TABLE WITH 3 ROWS */}
+            {/* DAILY BOTTLE BOX ENTRIES TABLE WITH RATE PER KG */}
             <div className="mb-4 border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
               <div className="bg-slate-100 px-3 py-2 border-b border-slate-200 font-semibold text-xs text-slate-700 flex justify-between items-center">
                 <span>Daily Box Entries Summary ({invDate})</span>
-                <span className="text-[11px] font-mono text-cyan-700 font-bold">Beer: 0.220 | Brandy: 0.420 | Waste: Total Weight ÷ 0.42</span>
+                <span className="text-[11px] font-mono text-cyan-700 font-bold">Calculations: Weight (kg) × Rate / kg</span>
               </div>
               
               <div className="p-3 space-y-3">
@@ -778,16 +778,16 @@ export default function Invoices() {
                     Beer Box
                   </div>
                   <div className="col-span-4 sm:col-span-3">
-                    <label className="text-[10px] text-slate-500 block">Weight </label>
-                    <div className="font-mono text-xs font-semibold text-cyan-700">{beerWeight} kg</div>
+                    <label className="text-[10px] text-slate-500 block">Weight (0.220 x nos)</label>
+                    <div className="font-mono text-xs font-semibold text-cyan-700">{parsedBeerWeight.toFixed(2)} kg</div>
                   </div>
                   <div className="col-span-4 sm:col-span-3">
                     <label className="text-[10px] text-slate-500 block">Nos (Qty)</label>
                     <div className="font-mono text-xs font-semibold text-slate-800">{beerQty} nos</div>
                   </div>
                   <div className="col-span-4 sm:col-span-3">
-                    <label className="text-[10px] text-slate-500 block font-medium">Rate / Box (₹)</label>
-                    <input type="number" step="0.01" placeholder="Enter Rate" value={beerRate} onChange={(e) => setBeerRate(e.target.value)} className="w-full rounded-md border border-slate-300 py-1 px-2 text-xs text-slate-800 outline-none focus:border-cyan-500 font-mono" />
+                    <label className="text-[10px] text-slate-500 block font-medium">Rate / kg (₹)</label>
+                    <input type="number" step="0.01" placeholder="Enter Rate / kg" value={beerRateKg} onChange={(e) => setBeerRateKg(e.target.value)} className="w-full rounded-md border border-slate-300 py-1 px-2 text-xs text-slate-800 outline-none focus:border-cyan-500 font-mono" />
                   </div>
                 </div>
 
@@ -797,16 +797,16 @@ export default function Invoices() {
                     Brandy Box
                   </div>
                   <div className="col-span-4 sm:col-span-3">
-                    <label className="text-[10px] text-slate-500 block">Weight</label>
-                    <div className="font-mono text-xs font-semibold text-cyan-700">{brandyWeight} kg</div>
+                    <label className="text-[10px] text-slate-500 block">Weight (0.420 x nos)</label>
+                    <div className="font-mono text-xs font-semibold text-cyan-700">{parsedBrandyWeight.toFixed(2)} kg</div>
                   </div>
                   <div className="col-span-4 sm:col-span-3">
                     <label className="text-[10px] text-slate-500 block">Nos (Qty)</label>
                     <div className="font-mono text-xs font-semibold text-slate-800">{brandyQty} nos</div>
                   </div>
                   <div className="col-span-4 sm:col-span-3">
-                    <label className="text-[10px] text-slate-500 block font-medium">Rate / Box (₹)</label>
-                    <input type="number" step="0.01" placeholder="Enter Rate" value={brandyRate} onChange={(e) => setBrandyRate(e.target.value)} className="w-full rounded-md border border-slate-300 py-1 px-2 text-xs text-slate-800 outline-none focus:border-cyan-500 font-mono" />
+                    <label className="text-[10px] text-slate-500 block font-medium">Rate / kg (₹)</label>
+                    <input type="number" step="0.01" placeholder="Enter Rate / kg" value={brandyRateKg} onChange={(e) => setBrandyRateKg(e.target.value)} className="w-full rounded-md border border-slate-300 py-1 px-2 text-xs text-slate-800 outline-none focus:border-cyan-500 font-mono" />
                   </div>
                 </div>
 
@@ -820,38 +820,15 @@ export default function Invoices() {
                     <div className="font-mono text-xs font-semibold text-purple-700">{parsedTotalWeight.toFixed(2)} kg</div>
                   </div>
                   <div className="col-span-4 sm:col-span-3">
-                    <label className="text-[10px] text-slate-500 block">Nos </label>
+                    <label className="text-[10px] text-slate-500 block">Nos (Weight ÷ 0.42)</label>
                     <div className="font-mono text-xs font-semibold text-slate-800">{totalWasteNos} nos</div>
                   </div>
                   <div className="col-span-4 sm:col-span-3">
-                    <label className="text-[10px] text-slate-500 block font-medium">Rate / Box (₹)</label>
-                    <input type="number" step="0.01" placeholder="Enter Rate" value={totalWasteRate} onChange={(e) => setTotalWasteRate(e.target.value)} className="w-full rounded-md border border-slate-300 py-1 px-2 text-xs text-slate-800 outline-none focus:border-cyan-500 font-mono" />
+                    <label className="text-[10px] text-slate-500 block font-medium">Rate / kg (₹)</label>
+                    <input type="number" step="0.01" placeholder="Enter Rate / kg" value={totalWasteRateKg} onChange={(e) => setTotalWasteRateKg(e.target.value)} className="w-full rounded-md border border-slate-300 py-1 px-2 text-xs text-slate-800 outline-none focus:border-cyan-500 font-mono" />
                   </div>
                 </div>
               </div>
-            </div>
-
-            <div className="flex justify-between items-center mb-1">
-              <label className="text-xs text-slate-600 font-medium">Additional Custom Line Items</label>
-              <button type="button" onClick={addItem} className="text-xs font-semibold text-cyan-600 hover:text-cyan-700 flex items-center gap-1">
-                <Plus className="h-3.5 w-3.5" /> Add Item
-              </button>
-            </div>
-
-            <div className="space-y-2">
-              {items.map((it, i) => (
-                <div key={i} className="grid grid-cols-12 gap-2 items-center border border-slate-200 p-2 rounded-lg bg-slate-50">
-                  <select value={BOX_TYPES.includes(it.description) ? it.description : ""} onChange={(e) => setItems((arr) => arr.map((x, idx) => idx === i ? { ...x, description: e.target.value } : x))}
-                    className="col-span-5 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500">
-                    {BOX_TYPES.map((t) => <option key={t} value={t} className="bg-white text-slate-800">{t}</option>)}
-                  </select>
-                  <input type="number" min="1" value={it.quantity} onChange={(e) => setItems(arr => arr.map((x, idx) => idx === i ? { ...x, quantity: e.target.value } : x))} placeholder="Qty"
-                    className="col-span-3 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 placeholder:text-slate-400" />
-                  <input type="number" step="0.01" value={it.rate} onChange={(e) => setItems(arr => arr.map((x, idx) => idx === i ? { ...x, rate: e.target.value } : x))} placeholder="Rate (₹)"
-                    className="col-span-3 rounded-lg bg-white border border-slate-300 py-2 px-2.5 text-xs text-slate-800 outline-none focus:border-cyan-500 placeholder:text-slate-400" />
-                  <button type="button" onClick={() => removeItem(i)} className="col-span-1 p-2 text-red-500 hover:text-red-700 flex justify-center"><Trash2 className="h-4 w-4" /></button>
-                </div>
-              ))}
             </div>
 
             {/* BILLING BREAKDOWN */}

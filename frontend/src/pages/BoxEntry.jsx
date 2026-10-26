@@ -172,6 +172,23 @@ export default function BoxEntry() {
       return;
     }
 
+    // PREVENT DUPLICATE ENTRY CHECK
+    const formattedInputDate = entryDate.slice(0, 10);
+    const isDuplicate = entries.some((existing) => {
+      // Ignore the current item when editing
+      if (editingId && existing.id === editingId) return false;
+
+      const existingShopId = (existing.shop_id || "").toString();
+      const existingDate = existing.entry_date ? existing.entry_date.slice(0, 10) : "";
+
+      return existingShopId === shopId.toString() && existingDate === formattedInputDate;
+    });
+
+    if (isDuplicate) {
+      toast.error("An entry for this shop on this date already exists! Duplicate entries are not allowed.");
+      return;
+    }
+
     setSaving(true);
     try {
       const payload = {

@@ -140,7 +140,7 @@ export default function PaymentManagement({
     }).filter(Boolean);
 
     // Closing Balance = Opening Balance - Total Purchase Invoices with GST
-    const closingBalance = Math.max(0, Number(openingBalance || 0) - totalPurchaseWithGst);
+    const closingBalance = Math.max(0, Number(openingBalance || 0));
     return { list, totalPurchaseWithGst, closingBalance };
   }, [purchaseData, openingBalance, paymentsByEntry]);
 

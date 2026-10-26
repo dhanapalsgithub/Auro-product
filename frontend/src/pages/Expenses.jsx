@@ -338,7 +338,7 @@ export default function Expenses() {
                     </td>
                     <td className="p-3 text-center whitespace-nowrap">
                       <div className="flex items-center justify-center gap-1">
-                        <button
+                        {/* <button
                           onClick={() => setEditingExpense({
                             ...exp,
                             expense_date: exp.expense_date ? exp.expense_date.slice(0, 10) : new Date().toISOString().slice(0, 10)
@@ -347,7 +347,7 @@ export default function Expenses() {
                           title="Edit"
                         >
                           <Edit2 className="h-3.5 w-3.5" />
-                        </button>
+                        </button> */}
                         <button
                           onClick={() => handleDelete(exp.id)}
                           className="p-1 rounded text-slate-400 hover:text-rose-400 hover:bg-white/10 transition"

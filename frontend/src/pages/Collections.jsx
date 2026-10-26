@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from "react";
-import { Coins, Download, Search, IndianRupee } from "lucide-react";
+import { Coins, Download, Search, IndianRupee, Calendar } from "lucide-react";
 import api from "../lib/apiClient";
 
 const PAGE_SIZE = 10;
@@ -35,11 +35,9 @@ export default function Collections() {
   const [initialOpeningBalance, setInitialOpeningBalance] = useState(0);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
-  const [fromDate, setFromDate] = useState("");
-  const [toDate, setToDate] = useState("");
+  const [selectedDate, setSelectedDate] = useState("");
 
   useEffect(() => {
-    // Fetch all required data concurrently to ensure accuracy
     Promise.allSettled([
       api.get("/collections"),
       api.get("/entries"),
@@ -58,7 +56,6 @@ export default function Collections() {
     });
   }, []);
 
-  // Map entries total purchase per shop (Cotton Box Entry with GST)
   const entriesByShop = useMemo(() => {
     const shopMap = {};
     const shopNoMap = {};
@@ -76,7 +73,6 @@ export default function Collections() {
     return { shopMap, shopNoMap };
   }, [entriesData]);
 
-  // Total Purchase Entries (Cotton Box Entries with GST) across all shops
   const totalCottonBoxPurchases = useMemo(() => {
     return entriesData.reduce(
       (sum, e) => sum + Number(e.total_amount || e.grand_total || e.amount || 0),
@@ -84,7 +80,6 @@ export default function Collections() {
     );
   }, [entriesData]);
 
-  // Merge shop rows with precise Cotton Box purchase amounts
   const rowsData = useMemo(() => {
     const rawRows = Array.isArray(collectionsData?.rows) ? collectionsData.rows : [];
 
@@ -106,7 +101,6 @@ export default function Collections() {
     });
   }, [collectionsData, entriesByShop]);
 
-  // Calculation for Opening & Closing Balance
   const currentOpeningBalance = Number(collectionsData?.global_opening_balance || initialOpeningBalance);
   
   const totalRevenue = useMemo(() => {
@@ -124,21 +118,18 @@ export default function Collections() {
   }, [totalCottonBoxPurchases, rowsData]);
 
   const totalExpenses = Number(collectionsData?.total_expenses || 0);
-  const netProfit = totalRevenue - (totalPurchases + totalExpenses);
+  const netProfit = totalRevenue - totalExpenses;
 
-  // Closing Balance = Opening Balance minus Total Cotton Box Purchase Entries with GST
-  const closingBalance = Math.max(0, currentOpeningBalance - totalPurchases);
+  const closingBalance = Math.max(0, currentOpeningBalance);
 
   const filtered = useMemo(() => {
     let result = rowsData;
 
-    if (fromDate || toDate) {
+    if (selectedDate) {
       result = result.filter((r) => {
         const itemDate = r.date || r.created_at || r.invoice_date;
         if (!itemDate) return false;
-        if (fromDate && itemDate < fromDate) return false;
-        if (toDate && itemDate > toDate) return false;
-        return true;
+        return itemDate.slice(0, 10) === selectedDate;
       });
     }
 
@@ -157,7 +148,7 @@ export default function Collections() {
       const dateB = new Date(b.date || b.created_at || b.invoice_date || 0);
       return dateB - dateA;
     });
-  }, [rowsData, search, fromDate, toDate]);
+  }, [rowsData, search, selectedDate]);
 
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
   const rows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -240,7 +231,7 @@ export default function Collections() {
         </div>
       </div>
 
-      {/* Search Input & Date Filters */}
+      {/* Search Input & Single Date Calendar Filter */}
       <div className="p-4 mb-4 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-4">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
@@ -255,25 +246,26 @@ export default function Collections() {
           />
         </div>
         <div className="flex items-center gap-2">
-          <input
-            type="date"
-            value={fromDate}
-            onChange={(e) => {
-              setFromDate(e.target.value);
-              setPage(1);
-            }}
-            className="rounded-xl bg-slate-50 border border-slate-200 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500"
-          />
-          <span className="text-slate-400 text-sm">to</span>
-          <input
-            type="date"
-            value={toDate}
-            onChange={(e) => {
-              setToDate(e.target.value);
-              setPage(1);
-            }}
-            className="rounded-xl bg-slate-50 border border-slate-200 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500"
-          />
+          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+            <Calendar className="h-4 w-4 text-slate-400" />
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => {
+                setSelectedDate(e.target.value);
+                setPage(1);
+              }}
+              className="bg-transparent text-sm text-slate-800 outline-none cursor-pointer"
+            />
+          </div>
+          {selectedDate && (
+            <button
+              onClick={() => setSelectedDate("")}
+              className="text-xs text-rose-500 hover:underline px-2"
+            >
+              Clear Date
+            </button>
+          )}
         </div>
       </div>
 
@@ -297,7 +289,7 @@ export default function Collections() {
               {rows.length === 0 ? (
                 <tr>
                   <td colSpan={8} className="p-6 text-center text-slate-400 text-xs">
-                    No shops or collection data found.
+                    No shops or collection data found for this date.
                   </td>
                 </tr>
               ) : (

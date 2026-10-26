@@ -164,6 +164,16 @@ def get_db():
 
 # --- PYDANTIC SCHEMAS ---
 
+class ShopCreate(BaseModel):
+    shop_no: str
+    name: str
+    district: Optional[str] = None
+    location: Optional[str] = None
+    supervisor: Optional[str] = None
+    contact: Optional[str] = None
+    cycle_days: Optional[int] = 5
+
+
 class EntryCreate(BaseModel):
     shop_id: Optional[int] = None
     box_type: Optional[str] = "Cotton Box"
@@ -207,6 +217,24 @@ class InvoiceCreate(BaseModel):
     total_amount: Optional[float] = 0.0
     amount_paid: Optional[float] = 0.0
     items: List[ItemCreate] = []
+
+
+class PaymentCreate(BaseModel):
+    shop_id: Optional[int] = None
+    invoice_id: Optional[int] = None
+    entry_id: Optional[int] = None
+    invoice_type: Optional[str] = "SALE_INVOICE"
+    amount: float = 0.0
+    mode: Optional[str] = "UPI"
+    payment_date: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class ExpenseCreate(BaseModel):
+    category: Optional[str] = "Auto Rent"
+    amount: float = 0.0
+    expense_date: Optional[str] = None
+    notes: Optional[str] = None
 
 
 # --- API ENDPOINTS ---
@@ -258,6 +286,8 @@ def get_dashboard(db: Session = Depends(get_db)):
     }
 
 
+# --- SHOPS ENDPOINTS ---
+
 @app.get("/api/shops")
 @app.get("/shops")
 def get_shops(search: Optional[str] = None, district: Optional[str] = None, db: Session = Depends(get_db)):
@@ -268,6 +298,58 @@ def get_shops(search: Optional[str] = None, district: Optional[str] = None, db: 
         query = query.filter(ShopModel.district.ilike(f"%{district}%"))
     shops = query.all()
     return [{"id": s.id, "shop_no": s.shop_no, "name": s.name, "district": s.district, "location": s.location, "supervisor": s.supervisor, "contact": s.contact, "cycle_days": s.cycle_days} for s in shops]
+
+
+@app.post("/api/shops")
+@app.post("/shops")
+def create_shop(payload: ShopCreate, db: Session = Depends(get_db)):
+    existing = db.query(ShopModel).filter(ShopModel.shop_no == payload.shop_no).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Shop number already exists")
+    new_shop = ShopModel(
+        shop_no=payload.shop_no,
+        name=payload.name,
+        district=payload.district,
+        location=payload.location,
+        supervisor=payload.supervisor,
+        contact=payload.contact,
+        cycle_days=payload.cycle_days or 5
+    )
+    db.add(new_shop)
+    db.commit()
+    db.refresh(new_shop)
+    return {"message": "Shop created successfully", "id": new_shop.id}
+
+
+@app.put("/api/shops/{shop_id}")
+@app.put("/shops/{shop_id}")
+def update_shop(shop_id: int, payload: ShopCreate, db: Session = Depends(get_db)):
+    shop = db.query(ShopModel).filter(ShopModel.id == shop_id).first()
+    if not shop:
+        raise HTTPException(status_code=404, detail="Shop not found")
+    
+    shop.shop_no = payload.shop_no
+    shop.name = payload.name
+    shop.district = payload.district
+    shop.location = payload.location
+    shop.supervisor = payload.supervisor
+    shop.contact = payload.contact
+    shop.cycle_days = payload.cycle_days or 5
+
+    db.commit()
+    db.refresh(shop)
+    return {"message": "Shop updated successfully", "id": shop.id}
+
+
+@app.delete("/api/shops/{shop_id}")
+@app.delete("/shops/{shop_id}")
+def delete_shop(shop_id: int, db: Session = Depends(get_db)):
+    shop = db.query(ShopModel).filter(ShopModel.id == shop_id).first()
+    if not shop:
+        raise HTTPException(status_code=404, detail="Shop not found")
+    db.delete(shop)
+    db.commit()
+    return {"message": "Shop deleted successfully"}
 
 
 @app.get("/api/settings/opening-balance")
@@ -285,6 +367,9 @@ def get_opening_balance(db: Session = Depends(get_db)):
         "opening_balance": float(setting.value) if setting and setting.value else 0.0,
         "history": history
     }
+
+
+# --- ENTRIES ENDPOINTS ---
 
 @app.get("/api/entries")
 @app.get("/entries")
@@ -519,8 +604,13 @@ def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)):
     else:
         inv_dt = datetime.datetime.utcnow()
 
-    # Auto-increment AP-INV-00001 sequence
-    if not payload.invoice_no:
+    inv_no = payload.invoice_no
+    if inv_no:
+        existing = db.query(InvoiceModel).filter(InvoiceModel.invoice_no == inv_no).first()
+        if existing:
+            inv_no = None
+
+    if not inv_no:
         last_inv = db.query(InvoiceModel).order_by(InvoiceModel.id.desc()).first()
         next_num = 1
         if last_inv and last_inv.invoice_no:
@@ -528,8 +618,6 @@ def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)):
             if parts[-1].isdigit():
                 next_num = int(parts[-1]) + 1
         inv_no = f"AP-INV-{next_num:05d}"
-    else:
-        inv_no = payload.invoice_no
 
     new_inv = InvoiceModel(
         invoice_no=inv_no,
@@ -613,6 +701,386 @@ def delete_invoice(invoice_id: int, db: Session = Depends(get_db)):
     db.delete(inv)
     db.commit()
     return {"message": "Invoice deleted successfully"}
+
+
+# --- PAYMENT ENDPOINTS ---
+
+@app.get("/api/payments")
+@app.get("/payments")
+def get_payments(db: Session = Depends(get_db)):
+    payments = db.query(PaymentModel).order_by(PaymentModel.payment_date.desc()).all()
+    result = []
+    for p in payments:
+        invoice_no = p.invoice.invoice_no if p.invoice else "—"
+        result.append({
+            "id": p.id,
+            "shop_id": p.shop_id,
+            "invoice_id": p.invoice_id,
+            "invoice_no": invoice_no,
+            "entry_id": p.entry_id,
+            "amount": p.amount,
+            "mode": p.mode,
+            "payment_date": p.payment_date.isoformat() if p.payment_date else None,
+            "notes": p.notes
+        })
+    return result
+
+
+@app.post("/api/payments")
+@app.post("/payments")
+def create_payment(payload: PaymentCreate, db: Session = Depends(get_db)):
+    if payload.payment_date:
+        try:
+            pay_dt = datetime.datetime.fromisoformat(payload.payment_date.replace("Z", "+00:00"))
+        except Exception:
+            pay_dt = datetime.datetime.utcnow()
+    else:
+        pay_dt = datetime.datetime.utcnow()
+
+    new_payment = PaymentModel(
+        shop_id=payload.shop_id,
+        invoice_id=payload.invoice_id,
+        entry_id=payload.entry_id,
+        invoice_type=payload.invoice_type or "SALE_INVOICE",
+        amount=payload.amount,
+        mode=payload.mode or "UPI",
+        payment_date=pay_dt,
+        notes=payload.notes
+    )
+
+    db.add(new_payment)
+
+    if payload.invoice_id:
+        inv = db.query(InvoiceModel).filter(InvoiceModel.id == payload.invoice_id).first()
+        if inv:
+            inv.amount_paid = (inv.amount_paid or 0.0) + payload.amount
+            if inv.amount_paid >= (inv.total_amount or 0.0):
+                inv.status = "paid"
+            elif inv.amount_paid > 0:
+                inv.status = "partial"
+
+    db.commit()
+    db.refresh(new_payment)
+
+    return {"message": "Payment recorded successfully", "id": new_payment.id}
+
+
+@app.delete("/api/payments/{payment_id}")
+@app.delete("/payments/{payment_id}")
+def delete_payment(payment_id: int, db: Session = Depends(get_db)):
+    payment = db.query(PaymentModel).filter(PaymentModel.id == payment_id).first()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    
+    if payment.invoice_id:
+        inv = db.query(InvoiceModel).filter(InvoiceModel.id == payment.invoice_id).first()
+        if inv:
+            inv.amount_paid = max(0.0, (inv.amount_paid or 0.0) - (payment.amount or 0.0))
+            tot = inv.total_amount or 0.0
+            if inv.amount_paid >= tot and tot > 0:
+                inv.status = "paid"
+            elif inv.amount_paid > 0:
+                inv.status = "partial"
+            else:
+                inv.status = "unpaid"
+
+    db.delete(payment)
+    db.commit()
+    return {"message": "Payment deleted successfully"}
+
+
+# --- COLLECTIONS / LEDGER ENDPOINT ---
+
+@app.get("/api/collections")
+@app.get("/collections")
+def get_collections(db: Session = Depends(get_db)):
+    shops = db.query(ShopModel).all()
+    invoices = db.query(InvoiceModel).all()
+    entries = db.query(EntryModel).all()
+    payments = db.query(PaymentModel).all()
+    expenses = db.query(ExpenseModel).all()
+
+    opening_balance_setting = db.query(SettingModel).filter(SettingModel.key == "opening_balance").first()
+    global_opening_balance = float(opening_balance_setting.value) if opening_balance_setting and opening_balance_setting.value else 0.0
+
+    invoice_paid_map = {}
+    for p in payments:
+        if p.invoice_id:
+            invoice_paid_map[p.invoice_id] = invoice_paid_map.get(p.invoice_id, 0.0) + (p.amount or 0.0)
+
+    shop_data = {}
+    for s in shops:
+        shop_data[s.id] = {
+            "shop_id": s.id,
+            "shop_no": s.shop_no,
+            "name": s.name,
+            "location": s.location or s.district or "—",
+            "purchase_amount": 0.0,
+            "invoiced": 0.0,
+            "paid": 0.0,
+            "outstanding": 0.0,
+            "date": s.created_at.isoformat() if s.created_at else datetime.datetime.utcnow().isoformat()
+        }
+
+    for e in entries:
+        sid = e.shop_id
+        if sid and sid in shop_data:
+            shop_data[sid]["purchase_amount"] += (e.total_amount or 0.0)
+            if e.entry_date:
+                shop_data[sid]["date"] = e.entry_date.isoformat()
+
+    total_revenue = 0.0
+    for i in invoices:
+        sid = i.shop_id
+        inv_total = i.total_amount or 0.0
+        if i.invoice_type and i.invoice_type.upper() == "SALES":
+            total_revenue += inv_total
+
+        if sid and sid in shop_data:
+            inv_paid = invoice_paid_map.get(i.id, i.amount_paid or 0.0)
+            shop_data[sid]["invoiced"] += inv_total
+            shop_data[sid]["paid"] += inv_paid
+            if i.invoice_date:
+                shop_data[sid]["date"] = i.invoice_date.isoformat()
+
+    total_expenses = sum([exp.amount or 0.0 for exp in expenses])
+
+    rows = []
+    for sid, data in shop_data.items():
+        data["outstanding"] = max(0.0, data["purchase_amount"] + data["invoiced"] - data["paid"])
+        rows.append(data)
+
+    return {
+        "rows": rows,
+        "global_opening_balance": global_opening_balance,
+        "total_revenue": total_revenue,
+        "total_expenses": total_expenses
+    }
+
+
+# --- REPORTS ENDPOINTS ---
+
+@app.get("/api/reports/daily")
+@app.get("/reports/daily")
+def get_daily_report(day: Optional[str] = None, db: Session = Depends(get_db)):
+    target_date = datetime.datetime.utcnow().date()
+    if day:
+        try:
+            target_date = datetime.date.fromisoformat(day)
+        except Exception:
+            pass
+
+    start_dt = datetime.datetime(target_date.year, target_date.month, target_date.day)
+    end_dt = start_dt + datetime.timedelta(days=1)
+
+    invoices = db.query(InvoiceModel).filter(
+        InvoiceModel.invoice_date >= start_dt,
+        InvoiceModel.invoice_date < end_dt
+    ).all()
+
+    purchase_invoice_total = 0.0
+    sale_invoice_total = 0.0
+    gst_collected_sales = 0.0
+    gst_collected_purchase = 0.0
+
+    for inv in invoices:
+        tot = inv.total_amount or 0.0
+        taxable = inv.taxable_amount or 0.0
+        gst = tot - taxable
+
+        if inv.invoice_type and inv.invoice_type.upper() == "PURCHASE":
+            purchase_invoice_total += tot
+            gst_collected_purchase += gst
+        else:
+            sale_invoice_total += tot
+            gst_collected_sales += gst
+
+    return {
+        "date": target_date.isoformat(),
+        "purchase_invoice_total": purchase_invoice_total,
+        "sale_invoice_total": sale_invoice_total,
+        "gst_collected_sales": gst_collected_sales,
+        "gst_collected_purchase": gst_collected_purchase
+    }
+
+
+@app.get("/api/reports/monthly")
+@app.get("/reports/monthly")
+def get_monthly_report(month: Optional[str] = None, db: Session = Depends(get_db)):
+    today = datetime.datetime.utcnow()
+    year, m = today.year, today.month
+    if month:
+        try:
+            parts = month.split("-")
+            year = int(parts[0])
+            m = int(parts[1])
+        except Exception:
+            pass
+
+    start_dt = datetime.datetime(year, m, 1)
+    if m == 12:
+        end_dt = datetime.datetime(year + 1, 1, 1)
+    else:
+        end_dt = datetime.datetime(year, m + 1, 1)
+
+    invoices = db.query(InvoiceModel).filter(
+        InvoiceModel.invoice_date >= start_dt,
+        InvoiceModel.invoice_date < end_dt
+    ).all()
+
+    purchase_invoice_total = 0.0
+    sale_invoice_total = 0.0
+    gst_collected_sales = 0.0
+    gst_collected_purchase = 0.0
+
+    for inv in invoices:
+        tot = inv.total_amount or 0.0
+        taxable = inv.taxable_amount or 0.0
+        gst = tot - taxable
+
+        if inv.invoice_type and inv.invoice_type.upper() == "PURCHASE":
+            purchase_invoice_total += tot
+            gst_collected_purchase += gst
+        else:
+            sale_invoice_total += tot
+            gst_collected_sales += gst
+
+    return {
+        "month": f"{year:04d}-{m:02d}",
+        "purchase_invoice_total": purchase_invoice_total,
+        "sale_invoice_total": sale_invoice_total,
+        "gst_collected_sales": gst_collected_sales,
+        "gst_collected_purchase": gst_collected_purchase
+    }
+
+
+# --- WASTE ANALYTICS ENDPOINTS ---
+
+@app.get("/api/analytics/waste")
+@app.get("/analytics/waste")
+def get_waste_analytics(db: Session = Depends(get_db)):
+    shops = db.query(ShopModel).all()
+    entries = db.query(EntryModel).all()
+    
+    total_waste_kg = sum([e.waste_kg or 0.0 for e in entries])
+    total_boxes = sum([e.quantity or 0 for e in entries])
+    
+    shop_waste = {}
+    shop_boxes = {}
+    for e in entries:
+        sid = e.shop_id
+        if sid:
+            shop_waste[sid] = shop_waste.get(sid, 0.0) + (e.waste_kg or 0.0)
+            shop_boxes[sid] = shop_boxes.get(sid, 0) + (e.quantity or 0)
+        
+    breakdown = []
+    for s in shops:
+        breakdown.append({
+            "shop_id": s.id,
+            "shop_no": s.shop_no,
+            "shop_name": s.name,
+            "total_waste_kg": shop_waste.get(s.id, 0.0),
+            "total_boxes": shop_boxes.get(s.id, 0)
+        })
+    
+    return {
+        "total_waste_kg": total_waste_kg,
+        "total_boxes": total_boxes,
+        "breakdown": breakdown,
+        "by_shop": breakdown
+    }
+
+
+# --- EXPENSE ENDPOINTS ---
+
+@app.get("/api/expenses")
+@app.get("/expenses")
+def get_expenses(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    category: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    query = db.query(ExpenseModel)
+    
+    if start:
+        try:
+            start_dt = datetime.datetime.fromisoformat(start)
+            query = query.filter(ExpenseModel.expense_date >= start_dt)
+        except Exception:
+            pass
+            
+    if end:
+        try:
+            end_dt = datetime.datetime.fromisoformat(end) + datetime.timedelta(days=1)
+            query = query.filter(ExpenseModel.expense_date < end_dt)
+        except Exception:
+            pass
+            
+    if category:
+        query = query.filter(ExpenseModel.category.ilike(f"%{category}%"))
+
+    expenses = query.order_by(ExpenseModel.expense_date.desc()).all()
+    
+    result = []
+    total_expenses = 0.0
+    for e in expenses:
+        amt = e.amount or 0.0
+        total_expenses += amt
+        result.append({
+            "id": e.id,
+            "category": e.category,
+            "amount": amt,
+            "expense_date": e.expense_date.isoformat() if e.expense_date else None,
+            "notes": e.notes
+        })
+        
+    total_revenue = db.query(func.coalesce(func.sum(InvoiceModel.total_amount), 0.0)).filter(InvoiceModel.invoice_type == "SALES").scalar() or 0.0
+    net_profit = total_revenue - total_expenses
+
+    return {
+        "expenses": result,
+        "total_revenue": float(total_revenue),
+        "total_expenses": float(total_expenses),
+        "net_profit": float(net_profit)
+    }
+
+
+@app.post("/api/expenses")
+@app.post("/expenses")
+def create_expense(payload: ExpenseCreate, db: Session = Depends(get_db)):
+    if payload.expense_date:
+        try:
+            exp_dt = datetime.datetime.fromisoformat(payload.expense_date.replace("Z", "+00:00"))
+        except Exception:
+            exp_dt = datetime.datetime.utcnow()
+    else:
+        exp_dt = datetime.datetime.utcnow()
+
+    new_expense = ExpenseModel(
+        category=payload.category or "Auto Rent",
+        amount=payload.amount,
+        expense_date=exp_dt,
+        notes=payload.notes
+    )
+
+    db.add(new_expense)
+    db.commit()
+    db.refresh(new_expense)
+
+    return {"message": "Expense created successfully", "id": new_expense.id}
+
+
+@app.delete("/api/expenses/{expense_id}")
+@app.delete("/expenses/{expense_id}")
+def delete_expense(expense_id: int, db: Session = Depends(get_db)):
+    expense = db.query(ExpenseModel).filter(ExpenseModel.id == expense_id).first()
+    if not expense:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    db.delete(expense)
+    db.commit()
+    return {"message": "Expense deleted successfully"}
+
 
 if __name__ == "__main__":
     import uvicorn
