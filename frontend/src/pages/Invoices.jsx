@@ -778,7 +778,7 @@ export default function Invoices() {
                     Beer Box
                   </div>
                   <div className="col-span-4 sm:col-span-3">
-                    <label className="text-[10px] text-slate-500 block">Weight (0.220 x nos)</label>
+                    <label className="text-[10px] text-slate-500 block">Weight </label>
                     <div className="font-mono text-xs font-semibold text-cyan-700">{beerWeight} kg</div>
                   </div>
                   <div className="col-span-4 sm:col-span-3">
@@ -797,7 +797,7 @@ export default function Invoices() {
                     Brandy Box
                   </div>
                   <div className="col-span-4 sm:col-span-3">
-                    <label className="text-[10px] text-slate-500 block">Weight (0.420 x nos)</label>
+                    <label className="text-[10px] text-slate-500 block">Weight</label>
                     <div className="font-mono text-xs font-semibold text-cyan-700">{brandyWeight} kg</div>
                   </div>
                   <div className="col-span-4 sm:col-span-3">
@@ -820,7 +820,7 @@ export default function Invoices() {
                     <div className="font-mono text-xs font-semibold text-purple-700">{parsedTotalWeight.toFixed(2)} kg</div>
                   </div>
                   <div className="col-span-4 sm:col-span-3">
-                    <label className="text-[10px] text-slate-500 block">Nos (Weight ÷ 0.42)</label>
+                    <label className="text-[10px] text-slate-500 block">Nos </label>
                     <div className="font-mono text-xs font-semibold text-slate-800">{totalWasteNos} nos</div>
                   </div>
                   <div className="col-span-4 sm:col-span-3">
