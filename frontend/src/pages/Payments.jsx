@@ -39,13 +39,15 @@ export default function PaymentManagement({
   const [openingBalance, setOpeningBalance] = useState(initialOB);
   const [loading, setLoading] = useState(false);
 
-  // Bulk Payment Modal State with Penalty Input
+  // Bulk Payment Modal State with Penalty Input, Selected Invoices & Payment Date
   const [isBulkPaymentOpen, setIsBulkPaymentOpen] = useState(false);
   const [bulkAmount, setBulkAmount] = useState('');
   const [penaltyAmount, setPenaltyAmount] = useState('');
   const [paymentMode, setPaymentMode] = useState('UPI');
   const [paymentNotes, setPaymentNotes] = useState('');
+  const [paymentDate, setPaymentDate] = useState(new Date().toISOString().split('T')[0]);
   const [submittingPayment, setSubmittingPayment] = useState(false);
+  const [selectedBulkIds, setSelectedBulkIds] = useState({}); // map of unique key -> boolean
 
   // Edit Payment Modal State
   const [editingPayment, setEditingPayment] = useState(null);
@@ -132,6 +134,7 @@ export default function PaymentManagement({
 
       return {
         ...inv,
+        uniqueKey: `entry-${inv.id}`,
         invoice_no: invoiceNo,
         shop_no: shopNo,
         shop_name: shopName,
@@ -184,6 +187,7 @@ export default function PaymentManagement({
 
       return {
         ...inv,
+        uniqueKey: `invoice-${inv.id}`,
         invoice_no: invoiceNo,
         shop_no: shopNo,
         shop_name: shopName,
@@ -290,6 +294,23 @@ export default function PaymentManagement({
     });
   }, [activeTab, purchaseMetrics.list, salesMetrics.list, paymentHistoryList, penaltyList, searchQuery, selectedShop, startDate, endDate]);
 
+  // Computed totals for date-filtered print summary
+  const filteredTotals = useMemo(() => {
+    if (activeTab === 'history' || activeTab === 'penalty') {
+      const totalAmt = filteredInvoices.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+      return { total: totalAmt, paid: 0, pending: 0 };
+    }
+    let total = 0;
+    let paid = 0;
+    let pending = 0;
+    filteredInvoices.forEach(inv => {
+      total += Number(inv.totalAmount || 0);
+      paid += Number(inv.paidAmount || 0);
+      pending += Number(inv.pendingAmount || 0);
+    });
+    return { total, paid, pending };
+  }, [activeTab, filteredInvoices]);
+
   const totalPages = Math.ceil(filteredInvoices.length / PAGE_SIZE) || 1;
   const paginatedInvoices = useMemo(() => {
     const start = (currentPage - 1) * PAGE_SIZE;
@@ -299,11 +320,14 @@ export default function PaymentManagement({
   const bulkDistributionPreview = useMemo(() => {
     let remaining = parseFloat(bulkAmount) || 0;
     const currentList = activeTab === 'purchase' ? purchaseMetrics.list : salesMetrics.list;
+    const hasAnySelected = Object.values(selectedBulkIds).some(Boolean);
     
     return currentList.map((inv) => {
       const pending = inv.pendingAmount;
-      if (remaining <= 0 || pending <= 0) {
-        return { ...inv, appliedAmount: 0, newPending: pending, statusText: pending <= 0 ? 'Settled' : 'Unchanged' };
+      const isSelected = hasAnySelected ? !!selectedBulkIds[inv.uniqueKey] : true;
+
+      if (!isSelected || remaining <= 0 || pending <= 0) {
+        return { ...inv, appliedAmount: 0, newPending: pending, statusText: pending <= 0 ? 'Settled' : (!isSelected ? 'Unselected' : 'Unchanged') };
       }
       const toApply = Math.min(remaining, pending);
       remaining -= toApply;
@@ -315,7 +339,7 @@ export default function PaymentManagement({
         statusText: newPending === 0 ? 'Settled' : `Remaining: ₹${newPending}`
       };
     });
-  }, [bulkAmount, activeTab, purchaseMetrics.list, salesMetrics.list]);
+  }, [bulkAmount, activeTab, purchaseMetrics.list, salesMetrics.list, selectedBulkIds]);
 
   const handleBulkPaymentSubmit = async (e) => {
     e.preventDefault();
@@ -325,32 +349,28 @@ export default function PaymentManagement({
 
     setSubmittingPayment(true);
     try {
-      const currentList = activeTab === 'purchase' ? purchaseMetrics.list : salesMetrics.list;
       let totalPaidApplied = 0;
       
-      for (const inv of currentList) {
-        if (remaining <= 0) break;
-        const pending = inv.pendingAmount;
-        if (pending <= 0) continue;
+      for (const item of bulkDistributionPreview) {
+        if (item.appliedAmount > 0) {
+          const payAmt = item.appliedAmount;
+          totalPaidApplied += payAmt;
 
-        const payAmt = Math.min(remaining, pending);
-        remaining -= payAmt;
-        totalPaidApplied += payAmt;
+          const payload = {
+            shop_id: item.shop_id || null,
+            invoice_id: item.type === 'invoice' ? item.id : null,
+            entry_id: item.type === 'entry' ? item.id : null,
+            invoice_type: activeTab === 'purchase' ? 'PURCHASE_ENTRY' : 'SALE_INVOICE',
+            amount: payAmt,
+            mode: paymentMode,
+            payment_date: paymentDate,
+            notes: paymentNotes || 'Bulk single payment (Selected/Distributed)'
+          };
 
-        const payload = {
-          shop_id: inv.shop_id || null,
-          invoice_id: inv.type === 'invoice' ? inv.id : null,
-          entry_id: inv.type === 'entry' ? inv.id : null,
-          invoice_type: activeTab === 'purchase' ? 'PURCHASE_ENTRY' : 'SALE_INVOICE',
-          amount: payAmt,
-          mode: paymentMode,
-          notes: paymentNotes || 'Bulk single payment (First to Last)'
-        };
-
-        await api.post('/payments', payload);
+          await api.post('/payments', payload);
+        }
       }
 
-      // If penalty is entered, record a penalty payment record so it shows in penalty records & payment history
       if (penalty > 0) {
         const penaltyPayload = {
           shop_id: null,
@@ -359,12 +379,12 @@ export default function PaymentManagement({
           invoice_type: 'PENALTY',
           amount: penalty,
           mode: 'Penalty',
+          payment_date: paymentDate,
           notes: paymentNotes ? `Penalty: ${paymentNotes}` : 'Penalty Deducted from Opening Balance'
         };
         await api.post('/payments', penaltyPayload);
       }
 
-      // Update Opening Balance in state & backend
       let updatedOB = Number(openingBalance || 0);
       if (activeTab === 'sales' && totalPaidApplied > 0) {
         updatedOB += totalPaidApplied;
@@ -383,6 +403,8 @@ export default function PaymentManagement({
       setBulkAmount('');
       setPenaltyAmount('');
       setPaymentNotes('');
+      setPaymentDate(new Date().toISOString().split('T')[0]);
+      setSelectedBulkIds({});
       fetchData();
     } catch (err) {
       console.error("Error submitting bulk payment:", err);
@@ -780,7 +802,7 @@ export default function PaymentManagement({
         )}
       </div>
 
-      {/* PRINTABLE REPORT VIEW WITH SUMMARIES */}
+      {/* PRINTABLE REPORT VIEW WITH SUMMARIES AT TOP & BOTTOM */}
       <div className="hidden print:block printable-report bg-white p-6">
         <div className="mb-4 pb-4 border-b border-slate-300">
           <h2 className="text-2xl font-bold text-slate-900">Auro Products - Payment & Summary Report</h2>
@@ -790,34 +812,24 @@ export default function PaymentManagement({
           </p>
         </div>
 
-        {/* PRINT SUMMARY CARDS */}
-        <div className="grid grid-cols-3 gap-4 mb-6 p-4 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+        {/* PRINT SUMMARY CARDS (TOP) */}
+        <div className="grid grid-cols-4 gap-4 mb-6 p-4 bg-slate-50 border border-slate-200 rounded-lg text-xs">
           <div>
             <span className="font-semibold text-slate-500 uppercase">Opening Balance:</span>
-            <div className="text-base font-bold text-amber-600">₹{safeFormat(openingBalance)}</div>
+            <div className="text-sm font-bold text-amber-600">₹{safeFormat(openingBalance)}</div>
           </div>
           <div>
-            <span className="font-semibold text-slate-500 uppercase">Total Penalty Deducted:</span>
-            <div className="text-base font-bold text-rose-600">₹{safeFormat(totalPenaltyAmount)}</div>
+            <span className="font-semibold text-slate-500 uppercase">Total Amount:</span>
+            <div className="text-sm font-bold text-slate-900">₹{safeFormat(filteredTotals.total)}</div>
           </div>
-          {activeTab === 'purchase' && (
-            <div>
-              <span className="font-semibold text-slate-500 uppercase">Total Purchase:</span>
-              <div className="text-base font-bold text-slate-900">₹{safeFormat(purchaseMetrics?.totalPurchaseWithGst)}</div>
-            </div>
-          )}
-          {activeTab === 'sales' && (
-            <div>
-              <span className="font-semibold text-slate-500 uppercase">Total Sales:</span>
-              <div className="text-base font-bold text-slate-900">₹{safeFormat(salesMetrics?.totalSaleAmount)}</div>
-            </div>
-          )}
-          {activeTab === 'penalty' && (
-            <div>
-              <span className="font-semibold text-slate-500 uppercase">Penalty Count:</span>
-              <div className="text-base font-bold text-slate-900">{penaltyList.length} Records</div>
-            </div>
-          )}
+          <div>
+            <span className="font-semibold text-slate-500 uppercase">Total Paid:</span>
+            <div className="text-sm font-bold text-emerald-600">₹{safeFormat(filteredTotals.paid)}</div>
+          </div>
+          <div>
+            <span className="font-semibold text-slate-500 uppercase">Balance Pending:</span>
+            <div className="text-sm font-bold text-rose-600">₹{safeFormat(filteredTotals.pending)}</div>
+          </div>
         </div>
 
         {activeTab === 'history' || activeTab === 'penalty' ? (
@@ -877,16 +889,26 @@ export default function PaymentManagement({
             </tbody>
           </table>
         )}
+
+        {/* PRINT SUMMARY (BOTTOM TOTALS) */}
+        <div className="mt-6 pt-4 border-t border-slate-300 flex justify-between items-center text-xs font-bold text-slate-800">
+          <div>Total Records: {filteredInvoices.length}</div>
+          <div className="flex gap-6">
+            <span>Total: ₹{safeFormat(filteredTotals.total)}</span>
+            <span className="text-emerald-700">Paid: ₹{safeFormat(filteredTotals.paid)}</span>
+            <span className="text-rose-700">Balance Pending: ₹{safeFormat(filteredTotals.pending)}</span>
+          </div>
+        </div>
       </div>
 
-      {/* BULK PAYMENT MODAL WITH PENALTY INPUT */}
+      {/* BULK PAYMENT MODAL WITH PAYMENT DATE, SELECTABLE INVOICES & PENALTY INPUT */}
       {isBulkPaymentOpen && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-2xl overflow-hidden max-h-[90vh] flex flex-col">
+          <div className="bg-white rounded-xl shadow-xl border border-slate-200 w-full max-w-3xl overflow-hidden max-h-[90vh] flex flex-col">
             <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
               <div className="flex items-center gap-2">
                 <CreditCard className="w-5 h-5 text-indigo-600" />
-                <h3 className="font-bold text-slate-800">Bulk Payment Distribution & Penalty</h3>
+                <h3 className="font-bold text-slate-800">Bulk Payment Distribution & Selection</h3>
               </div>
               <button onClick={() => setIsBulkPaymentOpen(false)} className="text-slate-400 hover:text-slate-600">
                 <X className="w-5 h-5" />
@@ -919,7 +941,17 @@ export default function PaymentManagement({
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Payment Date</label>
+                  <input
+                    type="date"
+                    value={paymentDate}
+                    onChange={(e) => setPaymentDate(e.target.value)}
+                    required
+                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 mb-1">Payment Mode</label>
                   <select
@@ -946,26 +978,69 @@ export default function PaymentManagement({
               </div>
 
               <div>
-                <p className="text-xs font-bold text-slate-600 uppercase mb-2">Invoice Settlement Preview (First to Last)</p>
+                <div className="flex justify-between items-center mb-2">
+                  <p className="text-xs font-bold text-slate-600 uppercase">Select Invoices & Settlement Preview</p>
+                  <div className="flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const allMap = {};
+                        const currentList = activeTab === 'purchase' ? purchaseMetrics.list : salesMetrics.list;
+                        currentList.forEach(i => allMap[i.uniqueKey] = true);
+                        setSelectedBulkIds(allMap);
+                      }}
+                      className="text-xs text-indigo-600 hover:underline font-medium"
+                    >
+                      Select All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedBulkIds({})}
+                      className="text-xs text-slate-500 hover:underline font-medium"
+                    >
+                      Deselect All (Auto)
+                    </button>
+                  </div>
+                </div>
+
                 <div className="border border-slate-200 rounded-lg overflow-hidden max-h-60 overflow-y-auto">
                   <table className="w-full text-xs text-left">
-                    <thead className="bg-slate-100 text-slate-600">
+                    <thead className="bg-slate-100 text-slate-600 sticky top-0">
                       <tr>
+                        <th className="p-2 w-10 text-center">Select</th>
                         <th className="p-2">Invoice No</th>
+                        <th className="p-2">Shop Name</th>
                         <th className="p-2">Pending</th>
                         <th className="p-2">Applied Amount</th>
                         <th className="p-2">Status</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {bulkDistributionPreview.map((item, i) => (
-                        <tr key={i} className={item.appliedAmount > 0 ? 'bg-indigo-50/50 font-medium' : ''}>
-                          <td className="p-2">{item.invoice_no}</td>
-                          <td className="p-2 text-rose-600">₹{safeFormat(item.pendingAmount)}</td>
-                          <td className="p-2 text-emerald-600 font-bold">₹{safeFormat(item.appliedAmount)}</td>
-                          <td className="p-2 text-slate-600">{item.statusText}</td>
-                        </tr>
-                      ))}
+                      {bulkDistributionPreview.map((item, i) => {
+                        const isChecked = !!selectedBulkIds[item.uniqueKey];
+                        return (
+                          <tr key={i} className={item.appliedAmount > 0 ? 'bg-indigo-50/50 font-medium' : ''}>
+                            <td className="p-2 text-center">
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => {
+                                  setSelectedBulkIds(prev => ({
+                                    ...prev,
+                                    [item.uniqueKey]: e.target.checked
+                                  }));
+                                }}
+                                className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                              />
+                            </td>
+                            <td className="p-2 font-mono font-semibold">{item.invoice_no}</td>
+                            <td className="p-2">{item.shop_name}</td>
+                            <td className="p-2 text-rose-600">₹{safeFormat(item.pendingAmount)}</td>
+                            <td className="p-2 text-emerald-600 font-bold">₹{safeFormat(item.appliedAmount)}</td>
+                            <td className="p-2 text-slate-600">{item.statusText}</td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
