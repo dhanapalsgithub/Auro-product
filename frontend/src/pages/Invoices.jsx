@@ -405,108 +405,108 @@ export default function Invoices() {
     const totalPayable = selectedInvoice?.total_amount ?? Math.round(netTaxable + cgstVal + sgstVal);
 
     return (
-      <div className="relative border-2 border-slate-900 p-8 text-slate-900 bg-white shadow-md mx-auto w-full max-w-[210mm] min-h-[297mm] flex flex-col justify-between print-page-break print:shadow-none print:border-2 print:m-0">
+      <div className="print-page-break relative border-2 border-slate-900 p-6 text-slate-900 bg-white shadow-md mx-auto w-full max-w-[210mm] h-[297mm] box-border flex flex-col justify-between print:shadow-none print:border-2 print:m-0 print:h-[297mm] print:break-after-page">
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-10 z-0 select-none">
-          <img src="/logo4.png" alt="Auro Products Watermark" className="w-[450px] h-[450px] object-contain filter grayscale" />
+          <img src="/logo4.png" alt="Auro Products Watermark" className="w-[400px] h-[400px] object-contain filter grayscale" />
         </div>
 
         <div className="relative z-10 flex-1 flex flex-col justify-between">
           <div>
-            <div className="flex justify-between items-center border-b-2 border-slate-900 pb-4 mb-4">
-              <div className="flex items-center gap-4">
-                <img src="/logo4.png" alt="Auro Products Logo" className="w-16 h-16 rounded-full object-cover border-2 border-slate-900 shrink-0 bg-white" />
+            <div className="flex justify-between items-center border-b-2 border-slate-900 pb-3 mb-3">
+              <div className="flex items-center gap-3">
+                <img src="/logo4.png" alt="Auro Products Logo" className="w-14 h-14 rounded-full object-cover border-2 border-slate-900 shrink-0 bg-white" />
                 <div>
-                  <h1 className="text-3xl font-black tracking-wide text-slate-900 uppercase">AURO PRODUCTS</h1>
-                  <p className="text-xs font-semibold text-slate-700">Industrial Area, Tamil Nadu</p>
-                  <p className="text-xs font-mono text-slate-800"><span className="font-bold">GSTIN:</span> 33AAAAA0000A1Z5 | <span className="font-bold">State:</span> Tamil Nadu (33)</p>
+                  <h1 className="text-2xl font-black tracking-wide text-slate-900 uppercase">AURO PRODUCTS</h1>
+                  <p className="text-[11px] font-semibold text-slate-700">Industrial Area, Tamil Nadu</p>
+                  <p className="text-[11px] font-mono text-slate-800"><span className="font-bold">GSTIN:</span> 33AAAAA0000A1Z5 | <span className="font-bold">State:</span> Tamil Nadu (33)</p>
                 </div>
               </div>
               <div className="text-right">
-                <span className="inline-block px-3 py-1 bg-slate-100 border border-slate-900 text-slate-900 font-black text-xs uppercase tracking-wider">
+                <span className="inline-block px-2.5 py-1 bg-slate-100 border border-slate-900 text-slate-900 font-black text-[10px] uppercase tracking-wider">
                   TAX INVOICE ({copyTitle})
                 </span>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-4 border-2 border-slate-900 p-3 mb-4 text-xs bg-slate-50/50">
-              <div className="space-y-1">
+            <div className="grid grid-cols-2 gap-3 border-2 border-slate-900 p-2.5 mb-3 text-xs bg-slate-50/50">
+              <div className="space-y-0.5">
                 <p><span className="font-bold">Invoice No:</span> <span className="font-mono font-bold text-slate-900">{selectedInvoice.invoice_no}</span></p>
                 <p><span className="font-bold">Invoice Date:</span> {fmtDate(selectedInvoice.invoice_date)}</p>
                 <p><span className="font-bold">Place of Supply:</span> Tamil Nadu (33)</p>
                 <p><span className="font-bold">Total Weight:</span> <span className="font-semibold">{Number(selectedInvoice.waste_kg || selectedInvoice.total_weight || 0).toFixed(2)} kg</span></p>
               </div>
-              <div className="space-y-1 border-l-2 pl-4 border-slate-300">
-                <p className="font-bold text-slate-900 underline uppercase text-[11px]">Bill To (Party / Company):</p>
-                <p className="font-bold text-sm text-slate-900">{selectedInvoice.party_name || selectedInvoice.customer_name}</p>
+              <div className="space-y-0.5 border-l-2 pl-3 border-slate-300">
+                <p className="font-bold text-slate-900 underline uppercase text-[10px]">Bill To (Party / Company):</p>
+                <p className="font-bold text-xs text-slate-900">{selectedInvoice.party_name || selectedInvoice.customer_name}</p>
                 <p><span className="font-bold">Address/Location:</span> {selectedInvoice.location || selectedInvoice.address || "—"}</p>
                 <p><span className="font-bold">Contact:</span> {selectedInvoice.contact || selectedInvoice.mobile || "—"}</p>
                 <p><span className="font-bold">Supervisor:</span> {selectedInvoice.supervisor || "—"}</p>
               </div>
             </div>
 
-            <table className="w-full border-2 border-slate-900 text-xs border-collapse mb-4">
+            <table className="w-full border-2 border-slate-900 text-xs border-collapse mb-3">
               <thead>
                 <tr className="bg-slate-200 border-b-2 border-slate-900 font-bold text-slate-900">
-                  <th className="border-r border-slate-900 p-2 text-center w-8">#</th>
-                  <th className="border-r border-slate-900 p-2 text-left">Description of Goods</th>
-                  <th className="border-r border-slate-900 p-2 text-center w-16">HSN</th>
-                  <th className="border-r border-slate-900 p-2 text-center w-16">Qty</th>
-                  <th className="border-r border-slate-900 p-2 text-center w-14">Unit</th>
-                  <th className="border-r border-slate-900 p-2 text-right w-20">Rate</th>
-                  <th className="p-2 text-right w-24">Amount (₹)</th>
+                  <th className="border-r border-slate-900 p-1.5 text-center w-8">#</th>
+                  <th className="border-r border-slate-900 p-1.5 text-left">Description of Goods</th>
+                  <th className="border-r border-slate-900 p-1.5 text-center w-14">HSN</th>
+                  <th className="border-r border-slate-900 p-1.5 text-center w-14">Qty</th>
+                  <th className="border-r border-slate-900 p-1.5 text-center w-12">Unit</th>
+                  <th className="border-r border-slate-900 p-1.5 text-right w-18">Rate</th>
+                  <th className="p-1.5 text-right w-20">Amount (₹)</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-300 font-medium">
                 {rawItems.map((r, idx) => (
                   <tr key={idx}>
-                    <td className="border-r border-slate-900 p-2 text-center font-mono">{idx + 1}</td>
-                    <td className="border-r border-slate-900 p-2 font-semibold text-slate-900">{r.description}</td>
-                    <td className="border-r border-slate-900 p-2 text-center font-mono">4819</td>
-                    <td className="border-r border-slate-900 p-2 text-center font-mono">{r.quantity}</td>
-                    <td className="border-r border-slate-900 p-2 text-center uppercase">{r.unit || "PCS"}</td>
-                    <td className="border-r border-slate-900 p-2 text-right font-mono">{Number(r.rate || 0).toFixed(2)}</td>
-                    <td className="p-2 text-right font-mono font-bold">{Number(r.amount || 0).toFixed(2)}</td>
+                    <td className="border-r border-slate-900 p-1.5 text-center font-mono">{idx + 1}</td>
+                    <td className="border-r border-slate-900 p-1.5 font-semibold text-slate-900">{r.description}</td>
+                    <td className="border-r border-slate-900 p-1.5 text-center font-mono">4819</td>
+                    <td className="border-r border-slate-900 p-1.5 text-center font-mono">{r.quantity}</td>
+                    <td className="border-r border-slate-900 p-1.5 text-center uppercase">{r.unit || "PCS"}</td>
+                    <td className="border-r border-slate-900 p-1.5 text-right font-mono">{Number(r.rate || 0).toFixed(2)}</td>
+                    <td className="p-1.5 text-right font-mono font-bold">{Number(r.amount || 0).toFixed(2)}</td>
                   </tr>
                 ))}
                 
                 <tr className="border-t border-slate-900 font-bold bg-slate-100">
-                  <td colSpan={6} className="border-r border-slate-900 p-2 text-right">Net Taxable Value</td>
-                  <td className="p-2 text-right font-mono">₹{netTaxable.toFixed(2)}</td>
+                  <td colSpan={6} className="border-r border-slate-900 p-1.5 text-right">Net Taxable Value</td>
+                  <td className="p-1.5 text-right font-mono">₹{netTaxable.toFixed(2)}</td>
                 </tr>
 
                 <tr>
-                  <td colSpan={6} className="border-r border-slate-900 p-2 text-right font-medium text-slate-700">CGST @ 2.5%</td>
-                  <td className="p-2 text-right font-mono text-slate-800">₹{cgstVal.toFixed(2)}</td>
+                  <td colSpan={6} className="border-r border-slate-900 p-1.5 text-right font-medium text-slate-700">CGST @ 2.5%</td>
+                  <td className="p-1.5 text-right font-mono text-slate-800">₹{cgstVal.toFixed(2)}</td>
                 </tr>
 
                 <tr>
-                  <td colSpan={6} className="border-r border-slate-900 p-2 text-right font-medium text-slate-700">SGST @ 2.5%</td>
-                  <td className="p-2 text-right font-mono text-slate-800">₹{sgstVal.toFixed(2)}</td>
+                  <td colSpan={6} className="border-r border-slate-900 p-1.5 text-right font-medium text-slate-700">SGST @ 2.5%</td>
+                  <td className="p-1.5 text-right font-mono text-slate-800">₹{sgstVal.toFixed(2)}</td>
                 </tr>
 
-                <tr className="border-t-2 border-slate-900 bg-slate-200 font-black text-sm">
-                  <td colSpan={6} className="border-r border-slate-900 p-2.5 text-right uppercase tracking-wider">Total Amount Payable</td>
-                  <td className="p-2.5 text-right font-mono text-slate-900">₹{totalPayable.toFixed(2)}</td>
+                <tr className="border-t-2 border-slate-900 bg-slate-200 font-black text-xs">
+                  <td colSpan={6} className="border-r border-slate-900 p-2 text-right uppercase tracking-wider">Total Amount Payable</td>
+                  <td className="p-2 text-right font-mono text-slate-900">₹{totalPayable.toFixed(2)}</td>
                 </tr>
               </tbody>
             </table>
 
-            <div className="border-2 border-slate-900 p-3 text-xs font-semibold bg-slate-50 mb-4">
+            <div className="border-2 border-slate-900 p-2 text-xs font-semibold bg-slate-50 mb-3">
               <span className="font-bold text-slate-900">Amount in Words: </span>
               <span className="italic text-slate-800">{numberToWords(totalPayable)}</span>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4 border-2 border-slate-900 p-3 text-xs bg-white">
-            <div className="space-y-1">
-              <p className="font-bold text-slate-900 underline uppercase">Bank Account Details:</p>
+          <div className="grid grid-cols-2 gap-4 border-2 border-slate-900 p-2.5 text-xs bg-white">
+            <div className="space-y-0.5">
+              <p className="font-bold text-slate-900 underline uppercase text-[10px]">Bank Account Details:</p>
               <p><span className="font-semibold">Bank Name:</span> State Bank of India</p>
               <p><span className="font-semibold">A/C No:</span> 38901234567</p>
               <p><span className="font-semibold">IFSC Code:</span> SBIN0001234</p>
             </div>
-            <div className="flex flex-col justify-between text-right pl-4 border-l border-slate-300">
-              <p className="font-bold text-slate-900 uppercase">For Auro Products</p>
-              <p className="font-bold text-slate-800 pt-8">(Authorized Signatory)</p>
+            <div className="flex flex-col justify-between text-right pl-3 border-l border-slate-300">
+              <p className="font-bold text-slate-900 uppercase text-[10px]">For Auro Products</p>
+              <p className="font-bold text-slate-800 pt-6">(Authorized Signatory)</p>
             </div>
           </div>
         </div>
@@ -526,7 +526,8 @@ export default function Invoices() {
           </button>
         </div>
       </PageHeader>
-{/* SUMMARY CARDS */}
+
+      {/* SUMMARY CARDS */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border-emerald-500/25 shadow-sm">
           <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 shrink-0">
@@ -582,9 +583,6 @@ export default function Invoices() {
         <button onClick={() => setActiveTab("invoices")} className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition shrink-0 ${activeTab === "invoices" ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}>
           All Sale Invoices ({safeInvoices.length})
         </button>
-        {/* <button onClick={() => setActiveTab("companies")} className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition shrink-0 ${activeTab === "companies" ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}>
-          Company Directory ({companyList.length})
-        </button> */}
       </div>
 
       {activeTab === "invoices" ? (
@@ -856,6 +854,11 @@ export default function Invoices() {
       {/* PRINT CSS */}
       <style>{`
         @media print {
+          body, html {
+            margin: 0 !important;
+            padding: 0 !important;
+            background-color: white !important;
+          }
           body * {
             visibility: hidden;
           }
@@ -863,10 +866,10 @@ export default function Invoices() {
             visibility: visible;
           }
           .print-single-page {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100%;
+            position: static !important;
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
           }
           .print-page-break {
             page-break-after: always;
@@ -874,7 +877,7 @@ export default function Invoices() {
           }
           @page {
             size: A4 portrait;
-            margin: 10mm;
+            margin: 0mm;
           }
         }
       `}</style>
