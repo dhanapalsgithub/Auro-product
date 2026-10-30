@@ -164,6 +164,9 @@ def get_db():
 
 # --- PYDANTIC SCHEMAS ---
 
+class OpeningBalanceUpdate(BaseModel):
+    opening_balance: float
+
 class ShopCreate(BaseModel):
     shop_no: str
     name: str
@@ -235,6 +238,37 @@ class ExpenseCreate(BaseModel):
     amount: float = 0.0
     expense_date: Optional[str] = None
     notes: Optional[str] = None
+
+
+# --- SETTINGS / OPENING BALANCE ENDPOINTS ---
+
+@app.post("/api/settings/opening-balance")
+@app.post("/settings/opening-balance")
+def update_opening_balance(payload: OpeningBalanceUpdate, db: Session = Depends(get_db)):
+    setting = db.query(SettingModel).filter(SettingModel.key == "opening_balance").first()
+    if not setting:
+        setting = SettingModel(key="opening_balance", value=str(payload.opening_balance))
+        db.add(setting)
+    else:
+        setting.value = str(payload.opening_balance)
+    db.commit()
+    return {"message": "Opening balance updated successfully", "opening_balance": payload.opening_balance}
+
+@app.get("/api/settings/opening-balance")
+@app.get("/settings/opening-balance")
+def get_opening_balance(db: Session = Depends(get_db)):
+    setting = db.query(SettingModel).filter(SettingModel.key == "opening_balance").first()
+    history_setting = db.query(SettingModel).filter(SettingModel.key == "opening_balance_history").first()
+    history = []
+    if history_setting and history_setting.value:
+        try:
+            history = json.loads(history_setting.value)
+        except Exception:
+            history = []
+    return {
+        "opening_balance": float(setting.value) if setting and setting.value else 0.0,
+        "history": history
+    }
 
 
 # --- API ENDPOINTS ---
@@ -350,23 +384,6 @@ def delete_shop(shop_id: int, db: Session = Depends(get_db)):
     db.delete(shop)
     db.commit()
     return {"message": "Shop deleted successfully"}
-
-
-@app.get("/api/settings/opening-balance")
-@app.get("/settings/opening-balance")
-def get_opening_balance(db: Session = Depends(get_db)):
-    setting = db.query(SettingModel).filter(SettingModel.key == "opening_balance").first()
-    history_setting = db.query(SettingModel).filter(SettingModel.key == "opening_balance_history").first()
-    history = []
-    if history_setting and history_setting.value:
-        try:
-            history = json.loads(history_setting.value)
-        except Exception:
-            history = []
-    return {
-        "opening_balance": float(setting.value) if setting and setting.value else 0.0,
-        "history": history
-    }
 
 
 # --- ENTRIES ENDPOINTS ---
@@ -711,12 +728,17 @@ def get_payments(db: Session = Depends(get_db)):
     payments = db.query(PaymentModel).order_by(PaymentModel.payment_date.desc()).all()
     result = []
     for p in payments:
-        invoice_no = p.invoice.invoice_no if p.invoice else "—"
+        inv_no = "—"
+        if p.invoice and p.invoice.invoice_no:
+            inv_no = p.invoice.invoice_no
+        elif p.entry_id:
+            inv_no = f"#ENTRY-{p.entry_id}"
+            
         result.append({
             "id": p.id,
             "shop_id": p.shop_id,
             "invoice_id": p.invoice_id,
-            "invoice_no": invoice_no,
+            "invoice_no": inv_no,
             "entry_id": p.entry_id,
             "amount": p.amount,
             "mode": p.mode,
@@ -878,17 +900,32 @@ def get_daily_report(day: Optional[str] = None, db: Session = Depends(get_db)):
         InvoiceModel.invoice_date < end_dt
     ).all()
 
+    entries = db.query(EntryModel).filter(
+        EntryModel.entry_date >= start_dt,
+        EntryModel.entry_date < end_dt
+    ).all()
+
     purchase_invoice_total = 0.0
     sale_invoice_total = 0.0
     gst_collected_sales = 0.0
     gst_collected_purchase = 0.0
+
+    # Include entries as purchase invoices/GST
+    for e in entries:
+        tot = e.total_amount or 0.0
+        taxable = e.taxable_amount or 0.0
+        gst = (e.cgst_amount or 0.0) + (e.sgst_amount or 0.0)
+        if gst == 0.0 and tot > taxable:
+            gst = tot - taxable
+        purchase_invoice_total += tot
+        gst_collected_purchase += gst
 
     for inv in invoices:
         tot = inv.total_amount or 0.0
         taxable = inv.taxable_amount or 0.0
         gst = tot - taxable
 
-        if inv.invoice_type and inv.invoice_type.upper() == "PURCHASE":
+        if inv.invoice_type and inv.invoice_type.upper() in ["PURCHASE", "PURCHASE_ENTRY"]:
             purchase_invoice_total += tot
             gst_collected_purchase += gst
         else:
@@ -928,17 +965,32 @@ def get_monthly_report(month: Optional[str] = None, db: Session = Depends(get_db
         InvoiceModel.invoice_date < end_dt
     ).all()
 
+    entries = db.query(EntryModel).filter(
+        EntryModel.entry_date >= start_dt,
+        EntryModel.entry_date < end_dt
+    ).all()
+
     purchase_invoice_total = 0.0
     sale_invoice_total = 0.0
     gst_collected_sales = 0.0
     gst_collected_purchase = 0.0
+
+    # Include entries as purchase invoices/GST
+    for e in entries:
+        tot = e.total_amount or 0.0
+        taxable = e.taxable_amount or 0.0
+        gst = (e.cgst_amount or 0.0) + (e.sgst_amount or 0.0)
+        if gst == 0.0 and tot > taxable:
+            gst = tot - taxable
+        purchase_invoice_total += tot
+        gst_collected_purchase += gst
 
     for inv in invoices:
         tot = inv.total_amount or 0.0
         taxable = inv.taxable_amount or 0.0
         gst = tot - taxable
 
-        if inv.invoice_type and inv.invoice_type.upper() == "PURCHASE":
+        if inv.invoice_type and inv.invoice_type.upper() in ["PURCHASE", "PURCHASE_ENTRY"]:
             purchase_invoice_total += tot
             gst_collected_purchase += gst
         else:

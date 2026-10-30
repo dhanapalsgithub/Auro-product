@@ -515,23 +515,25 @@ export default function Invoices() {
   };
 
   return (
-    <div>
+    <div className="p-3 sm:p-6">
       <PageHeader title="Sale Invoices" subtitle="Tamil Nadu Tax Sale Invoices · GST Sales Summary & Company Management" icon={Receipt}>
-        <button onClick={() => exportToCsv("sale_invoices.csv", safeInvoices)} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-sm hover:bg-white/10 transition">
-          <Download className="h-4 w-4" /> Export
-        </button>
-        <button onClick={handleOpenCreate} className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 px-4 py-2 text-sm font-semibold text-slate-900 active:scale-95 transition">
-          <Plus className="h-4 w-4" /> New Sale Invoice
-        </button>
+        <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          <button onClick={() => exportToCsv("sale_invoices.csv", safeInvoices)} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-xs sm:text-sm hover:bg-white/10 transition">
+            <Download className="h-4 w-4" /> Export
+          </button>
+          <button onClick={handleOpenCreate} className="flex items-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 px-3.5 py-2 text-xs sm:text-sm font-semibold text-slate-900 active:scale-95 transition">
+            <Plus className="h-4 w-4" /> New Sale Invoice
+          </button>
+        </div>
       </PageHeader>
 
       {/* SUMMARY CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4 mb-6">
         <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-cyan-500/10 to-blue-500/5 border-cyan-500/25">
           <div className="p-2.5 rounded-xl bg-cyan-500/20 text-cyan-400 shrink-0"><Building2 className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Companies</p>
-            <p className="text-lg font-bold font-mono text-cyan-300">{companyList.length}</p>
+            <p className="text-base sm:text-lg font-bold font-mono text-cyan-300">{companyList.length}</p>
           </div>
         </Card>
 
@@ -539,7 +541,7 @@ export default function Invoices() {
           <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 shrink-0"><IndianRupee className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Sales</p>
-            <p className="text-lg font-bold font-mono text-emerald-300">{inr(safeInvoices.reduce((a, c) => a + (Number(c.total_amount) || 0), 0))}</p>
+            <p className="text-base sm:text-lg font-bold font-mono text-emerald-300">{inr(safeInvoices.reduce((a, c) => a + (Number(c.total_amount) || 0), 0))}</p>
           </div>
         </Card>
 
@@ -547,7 +549,7 @@ export default function Invoices() {
           <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 shrink-0"><Wallet className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Paid</p>
-            <p className="text-lg font-bold font-mono text-amber-300">{inr(safeInvoices.reduce((a, c) => a + (Number(c.amount_paid) || 0), 0))}</p>
+            <p className="text-base sm:text-lg font-bold font-mono text-amber-300">{inr(safeInvoices.reduce((a, c) => a + (Number(c.amount_paid) || 0), 0))}</p>
           </div>
         </Card>
 
@@ -555,7 +557,7 @@ export default function Invoices() {
           <div className="p-2.5 rounded-xl bg-red-500/20 text-red-400 shrink-0"><Receipt className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Outstanding</p>
-            <p className="text-lg font-bold font-mono text-red-300">{inr(safeInvoices.reduce((a, c) => a + ((Number(c.total_amount) || 0) - (Number(c.amount_paid) || 0)), 0))}</p>
+            <p className="text-base sm:text-lg font-bold font-mono text-red-300">{inr(safeInvoices.reduce((a, c) => a + ((Number(c.total_amount) || 0) - (Number(c.amount_paid) || 0)), 0))}</p>
           </div>
         </Card>
 
@@ -563,7 +565,7 @@ export default function Invoices() {
           <div className="p-2.5 rounded-xl bg-purple-500/20 text-purple-400 shrink-0"><Scale className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Weight</p>
-            <p className="text-lg font-bold font-mono text-purple-300">
+            <p className="text-base sm:text-lg font-bold font-mono text-purple-300">
               {safeInvoices.reduce((acc, i) => acc + (Number(i.waste_kg || i.total_weight) || 0), 0).toFixed(2)} kg
             </p>
           </div>
@@ -571,34 +573,34 @@ export default function Invoices() {
       </div>
 
       {/* VIEW TABS */}
-      <div className="flex items-center gap-3 mb-4">
-        <button onClick={() => setActiveTab("invoices")} className={`px-4 py-2 rounded-xl text-sm font-medium transition ${activeTab === "invoices" ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}>
+      <div className="flex items-center gap-3 mb-4 overflow-x-auto whitespace-nowrap pb-1">
+        <button onClick={() => setActiveTab("invoices")} className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition shrink-0 ${activeTab === "invoices" ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}>
           All Sale Invoices ({safeInvoices.length})
         </button>
-        <button onClick={() => setActiveTab("companies")} className={`px-4 py-2 rounded-xl text-sm font-medium transition ${activeTab === "companies" ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}>
+        <button onClick={() => setActiveTab("companies")} className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition shrink-0 ${activeTab === "companies" ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}>
           Company Directory ({companyList.length})
         </button>
       </div>
 
       {activeTab === "invoices" ? (
         <>
-          <Card className="p-4 mb-4 flex flex-col md:flex-row gap-3">
+          <Card className="p-3 sm:p-4 mb-4 flex flex-col lg:flex-row gap-3">
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
               <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search invoice no / party name / wine shop / truck…"
                 className="w-full rounded-xl bg-white/5 border border-white/10 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-cyan-500/50" />
             </div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400 font-mono">From:</span>
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 lg:pb-0">
+              <span className="text-xs text-slate-400 font-mono whitespace-nowrap">From:</span>
               <input type="month" value={fromMonth} onChange={(e) => setFromMonth(e.target.value)} className="rounded-xl bg-white/5 border border-white/10 py-2 px-3 text-sm outline-none focus:border-cyan-500/50" />
-              <span className="text-xs text-slate-400 font-mono">To:</span>
+              <span className="text-xs text-slate-400 font-mono whitespace-nowrap">To:</span>
               <input type="month" value={toMonth} onChange={(e) => setToMonth(e.target.value)} className="rounded-xl bg-white/5 border border-white/10 py-2 px-3 text-sm outline-none focus:border-cyan-500/50" />
             </div>
           </Card>
 
           <Card className="overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm min-w-[1000px]">
                 <thead>
                   <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wider text-slate-500 font-mono">
                     <th className="p-4">Invoice</th>
@@ -618,24 +620,24 @@ export default function Invoices() {
 
                     return (
                       <tr key={i.id || i._id} className="hover:bg-white/5 transition-colors">
-                        <td className="p-4 font-mono text-cyan-300 cursor-pointer underline" onClick={() => handleViewInvoice(i)}>{i.invoice_no}</td>
-                        <td className="p-4 text-slate-400 font-mono">{fmtDate(i.invoice_date)}</td>
+                        <td className="p-4 font-mono text-cyan-300 cursor-pointer underline whitespace-nowrap" onClick={() => handleViewInvoice(i)}>{i.invoice_no}</td>
+                        <td className="p-4 text-slate-400 font-mono whitespace-nowrap">{fmtDate(i.invoice_date)}</td>
                         <td className="p-4 font-semibold text-black-200">
                           {i.party_name || i.customer_name || i.shop_name}
                           {i.supervisor && <span className="block text-xs font-normal text-slate-400">Supervisor: {i.supervisor}</span>}
                         </td>
                         <td className="p-4 text-xs text-slate-300">
-                          {i.contact && <div className="flex items-center gap-1"><Phone className="h-3 w-3 text-cyan-400" />{i.contact}</div>}
+                          {i.contact && <div className="flex items-center gap-1 whitespace-nowrap"><Phone className="h-3 w-3 text-cyan-400" />{i.contact}</div>}
                           {i.location && <div className="flex items-center gap-1 text-slate-400"><MapPin className="h-3 w-3 text-emerald-400" />{i.location}</div>}
                           {!i.contact && !i.location && <span className="text-slate-500">-</span>}
                         </td>
-                        <td className="p-4 text-center font-mono text-amber-400 font-semibold">
+                        <td className="p-4 text-center font-mono text-amber-400 font-semibold whitespace-nowrap">
                           {totalWaste > 0 ? `${totalWaste.toFixed(2)} kg` : "-"}
                         </td>
-                        <td className="p-4 text-right font-mono">{inr(i.taxable_amount)}</td>
-                        <td className="p-4 text-right font-mono">{inr(i.total_amount ?? i.grand_total)}</td>
-                        <td className="p-4 text-center"><span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${STATUS[i.status] || STATUS.unpaid}`}>{(i.status || "unpaid").toUpperCase()}</span></td>
-                        <td className="p-4">
+                        <td className="p-4 text-right font-mono whitespace-nowrap">{inr(i.taxable_amount)}</td>
+                        <td className="p-4 text-right font-mono whitespace-nowrap">{inr(i.total_amount ?? i.grand_total)}</td>
+                        <td className="p-4 text-center whitespace-nowrap"><span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${STATUS[i.status] || STATUS.unpaid}`}>{(i.status || "unpaid").toUpperCase()}</span></td>
+                        <td className="p-4 whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
                             <button onClick={() => handleViewInvoice(i)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-cyan-300 transition" title="View Invoice"><Eye className="h-4 w-4" /></button>
                             <button onClick={() => handleOpenEdit(i)} className="rounded-lg p-1.5 hover:bg-white/10 text-slate-400 hover:text-amber-300 transition" title="Edit Invoice"><Edit className="h-4 w-4" /></button>
@@ -656,7 +658,7 @@ export default function Invoices() {
         <Card className="overflow-hidden">
           <div className="p-4 border-b border-white/10 font-bold text-black-200">Company Details Directory (From Sales Invoices)</div>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm min-w-[700px]">
               <thead>
                 <tr className="border-b border-white/10 text-left text-xs uppercase tracking-wider text-slate-500 font-mono">
                   <th className="p-4">Company Name</th>
@@ -712,7 +714,7 @@ export default function Invoices() {
       {modal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setModal(false)} />
-          <form onSubmit={saveInvoice} className="glass relative z-10 w-full max-w-3xl rounded-2xl p-6 max-h-[90vh] overflow-y-auto text-slate-800 bg-white shadow-xl border border-slate-200">
+          <form onSubmit={saveInvoice} className="glass relative z-10 w-full max-w-3xl rounded-2xl p-4 sm:p-6 max-h-[90vh] overflow-y-auto text-slate-800 bg-white shadow-xl border border-slate-200">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-display text-lg font-semibold text-slate-900">{editId ? "Edit Sale Invoice" : "New Sale Invoice"}</h3>
               <button type="button" onClick={() => setModal(false)}><X className="h-5 w-5 text-slate-500 hover:text-slate-700" /></button>

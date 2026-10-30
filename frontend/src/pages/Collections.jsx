@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from "react";
-import { Coins, Download, Search, IndianRupee, Calendar } from "lucide-react";
+import { Coins, Download, Search, IndianRupee, Calendar, Printer } from "lucide-react";
 import api from "../lib/apiClient";
 
 const PAGE_SIZE = 10;
@@ -118,7 +118,9 @@ export default function Collections() {
   }, [totalCottonBoxPurchases, rowsData]);
 
   const totalExpenses = Number(collectionsData?.total_expenses || 0);
-  const netProfit = totalRevenue - totalExpenses;
+  
+  // Net Profit = total purchase + expense - sale invoice amount (totalRevenue)
+  const netProfit = totalPurchases + totalExpenses - totalRevenue;
 
   const closingBalance = Math.max(0, currentOpeningBalance);
 
@@ -153,9 +155,35 @@ export default function Collections() {
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE) || 1;
   const rows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  const handlePrintA4 = () => {
+    window.print();
+  };
+
   return (
     <div className="p-6 min-h-screen bg-slate-50 text-slate-800">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+      <style>{`
+        @media print {
+          body * {
+            visibility: hidden;
+          }
+          .printable-report, .printable-report * {
+            visibility: visible;
+          }
+          .printable-report {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: 100%;
+            background: white;
+            padding: 20px;
+          }
+          .no-print {
+            display: none !important;
+          }
+        }
+      `}</style>
+
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 no-print">
         <div>
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-2xl bg-cyan-100 text-cyan-700">
@@ -166,28 +194,36 @@ export default function Collections() {
             </h1>
           </div>
           <p className="text-sm text-slate-500 mt-1">
-            Tracking total sales invoice amounts with GST minus purchase deductions, expenses, and collections
+            Tracking total sales invoice amounts with GST, purchase deductions, expenses, and net profit
           </p>
         </div>
-        <button
-          onClick={() =>
-            exportToCsv("collections.csv", rowsData, [
-              { label: "Date", accessor: "date" },
-              { label: "Shop No", accessor: "shop_no" },
-              { label: "Name", accessor: "name" },
-              { label: "Purchase (GST)", accessor: "purchase_amount" },
-              { label: "Invoiced", accessor: "invoiced" },
-              { label: "Paid", accessor: "paid" },
-            ])
-          }
-          className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100 transition shadow-sm"
-        >
-          <Download className="h-4 w-4" /> Export
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handlePrintA4}
+            className="flex items-center justify-center gap-1.5 px-4 py-2.5 bg-white border border-slate-200 rounded-xl text-sm font-medium text-slate-700 hover:bg-slate-50 transition shadow-sm"
+          >
+            <Printer className="h-4 w-4" /> Print Summary
+          </button>
+          <button
+            onClick={() =>
+              exportToCsv("collections.csv", rowsData, [
+                { label: "Date", accessor: "date" },
+                { label: "Shop No", accessor: "shop_no" },
+                { label: "Name", accessor: "name" },
+                { label: "Purchase (GST)", accessor: "purchase_amount" },
+                { label: "Invoiced", accessor: "invoiced" },
+                { label: "Paid", accessor: "paid" },
+              ])
+            }
+            className="flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100 transition shadow-sm"
+          >
+            <Download className="h-4 w-4" /> Export
+          </button>
+        </div>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 no-print">
         <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-sm flex items-center gap-4">
           <div className="p-3 rounded-xl bg-cyan-50 text-cyan-600">
             <IndianRupee className="h-6 w-6" />
@@ -213,7 +249,7 @@ export default function Collections() {
             <IndianRupee className="h-6 w-6" />
           </div>
           <div>
-            <p className="text-xs text-slate-500 font-medium">Net Profit</p>
+            <p className="text-xs text-slate-500 font-medium">Net Profit (Purch + Exp - Sale)</p>
             <p className={`text-lg font-bold ${netProfit < 0 ? "text-rose-600" : "text-slate-900"}`}>
               {inr(netProfit)}
             </p>
@@ -232,7 +268,7 @@ export default function Collections() {
       </div>
 
       {/* Search Input & Single Date Calendar Filter */}
-      <div className="p-4 mb-4 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-4">
+      <div className="p-4 mb-4 rounded-2xl bg-white border border-slate-200 shadow-sm flex flex-col sm:flex-row gap-4 no-print">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
@@ -270,7 +306,7 @@ export default function Collections() {
       </div>
 
       {/* Table Container */}
-      <div className="rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden">
+      <div className="rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden no-print">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="bg-slate-100 text-slate-600 border-b border-slate-200 font-medium">
@@ -354,6 +390,81 @@ export default function Collections() {
             </button>
           </div>
         )}
+      </div>
+
+      {/* PRINTABLE REPORT VIEW (A4 Print Layout) */}
+      <div className="hidden print:block printable-report bg-white p-6">
+        <div className="mb-4 pb-4 border-b border-slate-300">
+          <h2 className="text-2xl font-bold text-slate-900">Auro Products - Collections & Balances Report</h2>
+          <p className="text-xs text-slate-600 mt-1">
+            Generated on: {new Date().toLocaleString()} {selectedDate ? `(Date Filter: ${selectedDate})` : ''}
+          </p>
+        </div>
+
+        {/* Print Summary Cards */}
+        <div className="grid grid-cols-4 gap-4 mb-6 p-4 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+          <div>
+            <span className="font-semibold text-slate-500 uppercase">Opening Balance:</span>
+            <div className="text-sm font-bold text-slate-900">{inr(currentOpeningBalance)}</div>
+          </div>
+          <div>
+            <span className="font-semibold text-slate-500 uppercase">Total Revenue:</span>
+            <div className="text-sm font-bold text-slate-900">{inr(totalRevenue)}</div>
+          </div>
+          <div>
+            <span className="font-semibold text-slate-500 uppercase">Net Profit:</span>
+            <div className={`text-sm font-bold ${netProfit < 0 ? "text-rose-600" : "text-slate-900"}`}>{inr(netProfit)}</div>
+          </div>
+          <div>
+            <span className="font-semibold text-slate-500 uppercase">Closing Balance:</span>
+            <div className="text-sm font-bold text-indigo-600">{inr(closingBalance)}</div>
+          </div>
+        </div>
+
+        <table className="w-full text-left border-collapse text-xs">
+          <thead>
+            <tr className="bg-slate-100 border-b border-slate-300 font-bold text-slate-800">
+              <th className="p-2">Date</th>
+              <th className="p-2">Shop No</th>
+              <th className="p-2">Name</th>
+              <th className="p-2">Location</th>
+              <th className="p-2 text-right">Purchase (GST)</th>
+              <th className="p-2 text-right">Invoiced (GST)</th>
+              <th className="p-2 text-right">Paid</th>
+              <th className="p-2 text-right">Outstanding</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-200">
+            {filtered.length === 0 ? (
+              <tr>
+                <td colSpan={8} className="p-4 text-center text-slate-400">
+                  No records found.
+                </td>
+              </tr>
+            ) : (
+              filtered.map((r, idx) => {
+                const shopOut = Math.max(
+                  0,
+                  Number(r.purchase_amount || 0) +
+                    Number(r.invoiced || 0) -
+                    Number(r.paid || 0)
+                );
+                return (
+                  <tr key={idx}>
+                    <td className="p-2 text-slate-600">{r.date || r.created_at || r.invoice_date || "-"}</td>
+                    <td className="p-2 font-bold">{r.shop_no || "-"}</td>
+                    <td className="p-2">{r.name || "-"}</td>
+                    <td className="p-2">{r.location || "-"}</td>
+                    <td className="p-2 text-right font-bold">{inr(r.purchase_amount || 0)}</td>
+                    <td className="p-2 text-right">{inr(r.invoiced || 0)}</td>
+                    <td className="p-2 text-right text-emerald-700">{inr(r.paid || 0)}</td>
+                    <td className="p-2 text-right text-rose-700 font-bold">{inr(shopOut)}</td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
