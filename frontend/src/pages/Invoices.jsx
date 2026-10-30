@@ -526,46 +526,51 @@ export default function Invoices() {
           </button>
         </div>
       </PageHeader>
-
-      {/* SUMMARY CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3 sm:gap-4 mb-6">
-        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-cyan-500/10 to-blue-500/5 border-cyan-500/25">
-          <div className="p-2.5 rounded-xl bg-cyan-500/20 text-cyan-400 shrink-0"><Building2 className="h-5 w-5" /></div>
-          <div className="min-w-0 flex-1">
-            <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Companies</p>
-            <p className="text-base sm:text-lg font-bold font-mono text-cyan-300">{companyList.length}</p>
+{/* SUMMARY CARDS */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border-emerald-500/25 shadow-sm">
+          <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 shrink-0">
+            <IndianRupee className="h-5 w-5" />
           </div>
-        </Card>
-
-        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border-emerald-500/25">
-          <div className="p-2.5 rounded-xl bg-emerald-500/20 text-emerald-400 shrink-0"><IndianRupee className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Sales</p>
-            <p className="text-base sm:text-lg font-bold font-mono text-emerald-300">{inr(safeInvoices.reduce((a, c) => a + (Number(c.total_amount) || 0), 0))}</p>
+            <p className="text-sm sm:text-base font-bold font-mono text-emerald-300 truncate">
+              {inr(safeInvoices.reduce((a, c) => a + (Number(c.total_amount) || 0), 0))}
+            </p>
           </div>
         </Card>
 
-        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-amber-500/10 to-orange-500/5 border-amber-500/25">
-          <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 shrink-0"><Wallet className="h-5 w-5" /></div>
+        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-amber-500/10 to-orange-500/5 border-amber-500/25 shadow-sm">
+          <div className="p-2.5 rounded-xl bg-amber-500/20 text-amber-400 shrink-0">
+            <Wallet className="h-5 w-5" />
+          </div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Paid</p>
-            <p className="text-base sm:text-lg font-bold font-mono text-amber-300">{inr(safeInvoices.reduce((a, c) => a + (Number(c.amount_paid) || 0), 0))}</p>
+            <p className="text-sm sm:text-base font-bold font-mono text-amber-300 truncate">
+              {inr(safeInvoices.reduce((a, c) => a + (Number(c.amount_paid) || 0), 0))}
+            </p>
           </div>
         </Card>
 
-        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-red-500/10 to-rose-500/5 border-red-500/25">
-          <div className="p-2.5 rounded-xl bg-red-500/20 text-red-400 shrink-0"><Receipt className="h-5 w-5" /></div>
+        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-red-500/10 to-rose-500/5 border-red-500/25 shadow-sm">
+          <div className="p-2.5 rounded-xl bg-red-500/20 text-red-400 shrink-0">
+            <Receipt className="h-5 w-5" />
+          </div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Outstanding</p>
-            <p className="text-base sm:text-lg font-bold font-mono text-red-300">{inr(safeInvoices.reduce((a, c) => a + ((Number(c.total_amount) || 0) - (Number(c.amount_paid) || 0)), 0))}</p>
+            <p className="text-sm sm:text-base font-bold font-mono text-red-300 truncate">
+              {inr(safeInvoices.reduce((a, c) => a + ((Number(c.total_amount) || 0) - (Number(c.amount_paid) || 0)), 0))}
+            </p>
           </div>
         </Card>
 
-        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-purple-500/10 to-indigo-500/5 border-purple-500/25 sm:col-span-2 xl:col-span-1">
-          <div className="p-2.5 rounded-xl bg-purple-500/20 text-purple-400 shrink-0"><Scale className="h-5 w-5" /></div>
+        <Card className="p-4 flex items-center gap-3 bg-gradient-to-br from-purple-500/10 to-indigo-500/5 border-purple-500/25 shadow-sm">
+          <div className="p-2.5 rounded-xl bg-purple-500/20 text-purple-400 shrink-0">
+            <Scale className="h-5 w-5" />
+          </div>
           <div className="min-w-0 flex-1">
             <p className="text-[10px] text-slate-400 uppercase font-mono truncate">Total Weight</p>
-            <p className="text-base sm:text-lg font-bold font-mono text-purple-300">
+            <p className="text-sm sm:text-base font-bold font-mono text-purple-300 truncate">
               {safeInvoices.reduce((acc, i) => acc + (Number(i.waste_kg || i.total_weight) || 0), 0).toFixed(2)} kg
             </p>
           </div>
@@ -577,9 +582,9 @@ export default function Invoices() {
         <button onClick={() => setActiveTab("invoices")} className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition shrink-0 ${activeTab === "invoices" ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}>
           All Sale Invoices ({safeInvoices.length})
         </button>
-        <button onClick={() => setActiveTab("companies")} className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition shrink-0 ${activeTab === "companies" ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}>
+        {/* <button onClick={() => setActiveTab("companies")} className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition shrink-0 ${activeTab === "companies" ? "bg-cyan-500/20 text-cyan-300 border border-cyan-500/30" : "bg-white/5 text-slate-400 hover:bg-white/10"}`}>
           Company Directory ({companyList.length})
-        </button>
+        </button> */}
       </div>
 
       {activeTab === "invoices" ? (
