@@ -5,7 +5,7 @@ import { PageHeader, Card } from "@/components/Shell";
 import Pager from "@/components/Pager";
 import { inr, fmtDate, exportToCsv } from "@/lib/helpers";
 import { toast } from "sonner";
-import { Receipt, Plus, Download, Search, Eye, Edit, Trash2, X, Wallet, Building2, Phone, MapPin, IndianRupee, Scale, Printer, ArrowLeft } from "lucide-react";
+import { Receipt, Plus, Download, Search, Eye, Edit, Trash2, X, Wallet, Building2, Phone, MapPin, IndianRupee, Scale, Printer, ArrowLeft, AlertCircle } from "lucide-react";
 import { BOX_TYPES } from "@/lib/boxTypes";
 
 const PAGE_SIZE = 10;
@@ -81,6 +81,7 @@ export default function Invoices() {
   const [location, setLocation] = useState("");
   const [supervisor, setSupervisor] = useState("");
   const [contact, setContact] = useState("");
+  const [gstNumber, setGstNumber] = useState("");
 
   const [invoiceNo, setInvoiceNo] = useState("AP-INV-00001");
   const [shopId, setShopId] = useState("");
@@ -97,6 +98,15 @@ export default function Invoices() {
   const [beerRateKg, setBeerRateKg] = useState("");
   const [brandyRateKg, setBrandyRateKg] = useState("");
   const [totalWasteRateKg, setTotalWasteRateKg] = useState("");
+
+  // Check if invoice already exists for the selected date
+  const existingInvoiceForDate = useMemo(() => {
+    if (!invDate || editId) return null;
+    return invoices.find((inv) => {
+      const d = inv.invoice_date ? inv.invoice_date.slice(0, 10) : "";
+      return d === invDate;
+    });
+  }, [invDate, invoices, editId]);
 
   const safeExtractArray = (res) => {
     if (Array.isArray(res?.data)) return res.data;
@@ -135,9 +145,13 @@ export default function Invoices() {
     }).catch(() => {});
   }, []);
 
-  // Fetch entries on date selection
+  // Fetch entries on date selection and notify if already billed
   useEffect(() => {
     if (modal && invDate && !editId) {
+      if (existingInvoiceForDate) {
+        toast.error(`Invoice closed for this date (${invDate}). Already billed under ${existingInvoiceForDate.invoice_no}!`);
+      }
+
       api.get("/entries", { params: { date: invDate, shop_id: shopId || undefined } })
         .then((res) => {
           const entryList = safeExtractArray(res);
@@ -154,7 +168,9 @@ export default function Invoices() {
                 totalBrandy += Number(e.quantity);
               }
             });
-            toast.success(`Loaded box entries for ${invDate}`);
+            if (!existingInvoiceForDate) {
+              toast.success(`Loaded box entries for ${invDate}`);
+            }
           }
           setBeerQty(totalBeer);
           setBrandyQty(totalBrandy);
@@ -170,7 +186,7 @@ export default function Invoices() {
           setTotalWeight("0.00");
         });
     }
-  }, [invDate, shopId, modal, editId]);
+  }, [invDate, shopId, modal, editId, existingInvoiceForDate]);
 
   const safeInvoices = Array.isArray(invoices) ? invoices : [];
   const pageCount = Math.max(1, Math.ceil(safeInvoices.length / PAGE_SIZE));
@@ -183,7 +199,7 @@ export default function Invoices() {
   const parsedTotalWeight = Number(totalWeight || 0);
   const totalWasteNos = parsedTotalWeight > 0 ? Math.round(parsedTotalWeight / 0.42) : 0;
 
-  // Amount Calculations (All based on Weight (kg) * Rate / kg)
+  // Amount Calculations
   const beerTotalAmount = parsedBeerWeight * (Number(beerRateKg) || 0);
   const brandyTotalAmount = parsedBrandyWeight * (Number(brandyRateKg) || 0);
   const totalWasteTotalAmount = parsedTotalWeight * (Number(totalWasteRateKg) || 0);
@@ -194,9 +210,6 @@ export default function Invoices() {
   const cgp = settings?.cgst_percent || 2.5, sgp = settings?.sgst_percent || 2.5;
   const cgst = grossTaxable * cgp / 100, sgst = grossTaxable * sgp / 100;
   const total = Math.round(grossTaxable + cgst + sgst);
-
-  const addItem = () => setItems((arr) => [...arr, { ...blankItem(), rate: "" }]);
-  const removeItem = (i) => setItems((arr) => arr.length === 1 ? arr : arr.filter((_, idx) => idx !== i));
 
   const handleViewInvoice = async (inv) => {
     const targetId = inv.id || inv._id || inv.invoice_id;
@@ -236,6 +249,7 @@ export default function Invoices() {
     setLocation("");
     setSupervisor("");
     setContact("");
+    setGstNumber("");
     setInvDate(new Date().toISOString().slice(0, 10));
     setTruckNo("");
     setTotalWeight("");
@@ -273,6 +287,7 @@ export default function Invoices() {
     setLocation(inv.location || inv.address || "");
     setSupervisor(inv.supervisor || "");
     setContact(inv.contact || inv.mobile || "");
+    setGstNumber(inv.gst_number || "");
     setTruckNo(inv.truck_no || "");
     setTotalWeight(inv.total_weight || inv.waste_kg || "");
 
@@ -294,6 +309,10 @@ export default function Invoices() {
 
   const saveInvoice = async (e) => {
     e.preventDefault();
+    if (!editId && existingInvoiceForDate) {
+      toast.error(`Invoice closed for date ${invDate}. Already billed under ${existingInvoiceForDate.invoice_no}!`);
+      return;
+    }
     if (!partyName) { toast.error("Enter Party / Company Name"); return; }
 
     const addedDescriptions = new Set();
@@ -367,6 +386,7 @@ export default function Invoices() {
         location: location || null,
         supervisor: supervisor || null,
         contact: contact || null,
+        gst_number: gstNumber || null,
         invoice_date: new Date(invDate).toISOString(),
         invoice_type: "SALES",
         truck_no: truckNo,
@@ -440,6 +460,7 @@ export default function Invoices() {
                 <p className="font-bold text-xs text-slate-900">{selectedInvoice.party_name || selectedInvoice.customer_name}</p>
                 <p><span className="font-bold">Address/Location:</span> {selectedInvoice.location || selectedInvoice.address || "—"}</p>
                 <p><span className="font-bold">Contact:</span> {selectedInvoice.contact || selectedInvoice.mobile || "—"}</p>
+                {selectedInvoice.gst_number && <p><span className="font-bold">GST No:</span> {selectedInvoice.gst_number}</p>}
                 <p><span className="font-bold">Supervisor:</span> {selectedInvoice.supervisor || "—"}</p>
               </div>
             </div>
@@ -609,7 +630,7 @@ export default function Invoices() {
                     <th className="p-4">Invoice</th>
                     <th className="p-4">Date</th>
                     <th className="p-4">Party / Company Name</th>
-                    <th className="p-4">Mobile & Address</th>
+                    <th className="p-4">Mobile & GST No</th>
                     <th className="p-4 text-center">Total Weight</th>
                     <th className="p-4 text-right">Taxable Amount</th>
                     <th className="p-4 text-right">Total Amount</th>
@@ -631,8 +652,12 @@ export default function Invoices() {
                         </td>
                         <td className="p-4 text-xs text-slate-300">
                           {i.contact && <div className="flex items-center gap-1 whitespace-nowrap"><Phone className="h-3 w-3 text-cyan-400" />{i.contact}</div>}
-                          {i.location && <div className="flex items-center gap-1 text-slate-400"><MapPin className="h-3 w-3 text-emerald-400" />{i.location}</div>}
-                          {!i.contact && !i.location && <span className="text-slate-500">-</span>}
+                          {i.gst_number && (
+                            <div className="text-[11px] font-mono text-cyan-400 mt-1 pl-4">
+                              GST: {i.gst_number}
+                            </div>
+                          )}
+                          {!i.contact && !i.gst_number && <span className="text-slate-500">-</span>}
                         </td>
                         <td className="p-4 text-center font-mono text-amber-400 font-semibold whitespace-nowrap">
                           {totalWaste > 0 ? `${totalWaste.toFixed(2)} kg` : "-"}
@@ -723,6 +748,16 @@ export default function Invoices() {
               <button type="button" onClick={() => setModal(false)}><X className="h-5 w-5 text-slate-500 hover:text-slate-700" /></button>
             </div>
 
+            {/* CLOSED INVOICE WARNING BANNER */}
+            {existingInvoiceForDate && (
+              <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-xl flex items-center gap-3 text-red-800">
+                <AlertCircle className="h-5 w-5 text-red-600 shrink-0" />
+                <div className="text-xs">
+                  <span className="font-bold">Invoice Closed for this Date!</span> An invoice (<span className="font-mono font-bold">{existingInvoiceForDate.invoice_no}</span>) has already been created for {invDate}.
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <div>
                 <label className="text-xs text-slate-600 font-medium">Invoice No.</label>
@@ -736,7 +771,7 @@ export default function Invoices() {
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <div>
                 <label className="text-xs text-slate-600 font-medium">Location / Address</label>
                 <input type="text" placeholder="Location Name" value={location} onChange={(e) => setLocation(e.target.value)}
@@ -747,10 +782,18 @@ export default function Invoices() {
                 <input type="text" placeholder="Supervisor Name" value={supervisor} onChange={(e) => setSupervisor(e.target.value)}
                   className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
               </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
               <div>
                 <label className="text-xs text-slate-600 font-medium">Mobile No.</label>
                 <input type="tel" placeholder="9876543210" value={contact} onChange={(e) => setContact(e.target.value)}
                   className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
+              </div>
+              <div>
+                <label className="text-xs text-cyan-700 font-medium">GST Number</label>
+                <input type="text" placeholder="33AAAAA0000A1Z5" value={gstNumber} onChange={(e) => setGstNumber(e.target.value)}
+                  className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm text-slate-800 font-mono outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
               </div>
             </div>
 
@@ -844,8 +887,9 @@ export default function Invoices() {
               <div className="flex justify-between font-bold text-sm text-slate-900 pt-1 border-t border-slate-200"><span>Grand Total</span><span>₹{total.toFixed(2)}</span></div>
             </div>
 
-            <button type="submit" disabled={saving} className="mt-5 w-full rounded-xl bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500 py-3 text-sm font-semibold text-white active:scale-95 transition shadow-sm">
-              {saving ? "Saving…" : editId ? "Update Sale Invoice" : "Create Sale Invoice"}
+            <button type="submit" disabled={saving || (!editId && Boolean(existingInvoiceForDate))} 
+              className={`mt-5 w-full rounded-xl py-3 text-sm font-semibold text-white active:scale-95 transition shadow-sm ${!editId && existingInvoiceForDate ? 'bg-slate-400 cursor-not-allowed' : 'bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500'}`}>
+              {saving ? "Saving…" : (!editId && existingInvoiceForDate) ? "Invoice Closed for This Date" : editId ? "Update Sale Invoice" : "Create Sale Invoice"}
             </button>
           </form>
         </div>

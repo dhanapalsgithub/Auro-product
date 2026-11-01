@@ -31,6 +31,7 @@ const empty = {
   location: "",
   supervisor: "",
   contact: "",
+  gst_number: "",
   cycle_days: 5,
 };
 
@@ -91,7 +92,6 @@ export default function Shops() {
         }
       })
       .catch(() => {
-        // Fallback to secondary endpoint if available
         api.get("/api/invoices").then((res) => {
           if (Array.isArray(res.data)) {
             const names = [
@@ -129,7 +129,6 @@ export default function Shops() {
   useEffect(() => {
     api.get("/shops/districts")
       .then((r) => {
-        // 1. தரவு Array தானா எனப் பாதுகாப்பாகச் சரிபார்த்தல்
         const rawData = Array.isArray(r.data)
           ? r.data
           : Array.isArray(r.data?.districts)
@@ -138,7 +137,6 @@ export default function Shops() {
               ? r.data.data
               : [];
 
-        // 2. பாதுகாப்பாக Alphabetical Order-ல் Sort செய்தல் (Case-insensitive)
         const sortedDistricts = [...rawData].sort((a, b) =>
           String(a).localeCompare(String(b))
         );
@@ -147,36 +145,32 @@ export default function Shops() {
       })
       .catch((err) => {
         console.error("Failed to load districts:", err);
-        setDistricts([]); // பிழை ஏற்பட்டால் காலியான Array அமைத்தல்
+        setDistricts([]);
       });
   }, []);
-  // Dynamic filter for shop records based on search, district, type/party selection, and date range
+
   const filteredShops = useMemo(() => {
     return (shops || [])
       .filter((s) => {
-        // 1. Search text filter
         const q = search.toLowerCase().trim();
         const matchesSearch =
           !q ||
           (s.shop_no && s.shop_no.toString().toLowerCase().includes(q)) ||
           (s.name && s.name.toString().toLowerCase().includes(q)) ||
-          (s.location && s.location.toString().toLowerCase().includes(q));
+          (s.location && s.location.toString().toLowerCase().includes(q)) ||
+          (s.gst_number && s.gst_number.toString().toLowerCase().includes(q));
 
-        // 2. District filter
         const matchesDistrict = !district || s.district === district;
 
-        // 3. Type & Specific Party Dropdown Filter
         const isParty = s.shop_no?.startsWith("CUST-") || s.type === "party";
         let matchesType = true;
         if (typeFilter === "shop") matchesType = !isParty;
         else if (typeFilter === "party") matchesType = isParty;
         else if (typeFilter !== "all") {
-          // If a specific party name is selected from the dropdown
           const shopName = (s.name || s.shop_no || "").toLowerCase();
           matchesType = shopName.includes(typeFilter.toLowerCase());
         }
 
-        // 4. Date range filter
         const rawDate = s.created_at || s.entry_date || s.date || s.updated_at;
         const shopDateStr = rawDate ? String(rawDate).slice(0, 10) : null;
 
@@ -195,7 +189,6 @@ export default function Shops() {
       });
   }, [shops, search, district, typeFilter, fromDate, toDate]);
 
-  // Sort filtered shops: newest first (highest ID first)
   const sortedShops = useMemo(() => {
     return [...filteredShops].sort((a, b) => (b.id || 0) - (a.id || 0));
   }, [filteredShops]);
@@ -262,7 +255,6 @@ export default function Shops() {
     }
   };
 
-  // Replace the del function in Shops.jsx:
   const del = async (id) => {
     if (!canEdit) {
       toast.error("Permission denied: Only admins can delete shops.");
@@ -271,7 +263,6 @@ export default function Shops() {
     if (!window.confirm("Delete this shop?")) return;
 
     try {
-      // Correct call (Axios automatically prepends /api)
       await api.delete(`/shops/${id}`);
       toast.success("Shop deleted");
       load();
@@ -281,6 +272,7 @@ export default function Shops() {
       );
     }
   };
+
   const onImport = async (e) => {
     if (!canEdit) {
       toast.error("Permission denied: Import requires admin rights.");
@@ -314,6 +306,7 @@ export default function Shops() {
       { label: "location", accessor: "location" },
       { label: "supervisor", accessor: "supervisor" },
       { label: "contact", accessor: "contact" },
+      { label: "gst_number", accessor: "gst_number" },
       { label: "cycle_days", accessor: "cycle_days" },
     ]);
 
@@ -374,7 +367,6 @@ export default function Shops() {
       </PageHeader>
 
       <Card className="p-4 mb-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3">
-        {/* Search input */}
         <div className="relative lg:col-span-4">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
           <input
@@ -384,12 +376,11 @@ export default function Shops() {
               setSearch(e.target.value);
               setPage(1);
             }}
-            placeholder="Search shop no, name, location…"
+            placeholder="Search shop no, name, location, GST…"
             className="w-full rounded-xl bg-transparent/5 border border-white/10 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-cyan-500/50"
           />
         </div>
 
-        {/* Enhanced Type & GST Invoice Party Filter Dropdown */}
         <div className="lg:col-span-3">
           <select
             value={typeFilter}
@@ -408,21 +399,9 @@ export default function Shops() {
             <option value="party" className="bg-slate-900 text-slate-200">
               Party / Purchase Entries Only
             </option>
-
-            {/* Dynamic GST Invoice Parties List
-            {invoiceParties.length > 0 && (
-              <optgroup label="── GST Invoice Parties ──" className="bg-slate-900 text-cyan-400 font-semibold">
-                {invoiceParties.map((partyName) => (
-                  <option key={partyName} value={partyName} className="bg-slate-900 text-slate-200">
-                    {partyName}
-                  </option>
-                ))}
-              </optgroup>
-            )} */}
           </select>
         </div>
 
-        {/* District filter */}
         <div className="lg:col-span-3">
           <select
             data-testid="shops-district-filter"
@@ -444,7 +423,6 @@ export default function Shops() {
           </select>
         </div>
 
-        {/* From Date picker */}
         <div className="lg:col-span-2 relative">
           <div className="flex items-center rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm focus-within:border-cyan-500/50">
             <span className="text-[8px] font-bold text-slate-100 uppercase mr-1 font-mono">
@@ -464,7 +442,6 @@ export default function Shops() {
           </div>
         </div>
 
-        {/* To Date picker */}
         <div className="lg:col-span-2 relative">
           <div className="flex items-center rounded-xl bg-white/5 border border-white/10 px-3 py-2 text-sm focus-within:border-cyan-500/50">
             <span className="text-[10px] font-bold text-slate-300 uppercase mr-2 font-mono">
@@ -484,7 +461,6 @@ export default function Shops() {
           </div>
         </div>
 
-        {/* Clear Filters Button */}
         {(search || district || fromDate || toDate || typeFilter !== "all") && (
           <div className="lg:col-span-1 flex items-center justify-end">
             <button
@@ -536,8 +512,13 @@ export default function Shops() {
                   <td className="p-4 text-slate-400">
                     <span className="flex items-center gap-1.5">
                       <MapPin className="h-3.5 w-3.5" />
-                      {s.location}
+                      {s.location || "—"}
                     </span>
+                    {s.gst_number && (
+                      <div className="text-[11px] font-mono text-cyan-400 mt-1 pl-5">
+                        GST: {s.gst_number}
+                      </div>
+                    )}
                   </td>
                   <td className="p-4 text-slate-400">{s.supervisor || "—"}</td>
                   <td className="p-4 text-slate-400">{s.contact || "—"}</td>
@@ -626,11 +607,12 @@ export default function Shops() {
                 ["location", "Location"],
                 ["supervisor", "Supervisor"],
                 ["contact", "Contact"],
+                ["gst_number", "GST Number"],
               ].map(([k, label]) => (
                 <div
                   key={k}
                   className={
-                    k === "location" || k === "name" ? "sm:col-span-2" : ""
+                    k === "location" || k === "name" || k === "gst_number" ? "sm:col-span-2" : ""
                   }
                 >
                   <label className="text-xs text-slate-600 font-medium">
@@ -643,6 +625,7 @@ export default function Shops() {
                     onChange={(e) =>
                       setModal({ ...modal, [k]: e.target.value })
                     }
+                    placeholder={k === "gst_number" ? "e.g. 33AAAAA0000A1Z5" : ""}
                     className="mt-1 w-full rounded-lg bg-slate-50 border border-slate-200 py-2 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:bg-white transition"
                   />
                 </div>
@@ -788,7 +771,6 @@ export default function Shops() {
                       History Logs & Filter
                     </label>
 
-                    {/* Date Range Inputs */}
                     <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
                       <div className="flex items-center gap-1 rounded bg-white/10 border border-white/20 px-2 py-1 text-xs text-white">
                         <span className="text-[10px] font-mono font-bold text-slate-300 uppercase">From</span>
@@ -834,7 +816,6 @@ export default function Shops() {
                     </div>
                   </div>
 
-                  {/* Log List with Date Filtering & Pagination */}
                   <div className="space-y-2 rounded-lg bg-white p-3 border border-slate-200 text-xs text-slate-900 shadow-sm">
                     {(() => {
                       const filteredHistory = openingHistory.filter((h) => {

@@ -29,6 +29,7 @@ class ShopModel(Base):
     location: Mapped[Optional[str]] = mapped_column(nullable=True)
     supervisor: Mapped[Optional[str]] = mapped_column(nullable=True)
     contact: Mapped[Optional[str]] = mapped_column(nullable=True)
+    gst_number: Mapped[Optional[str]] = mapped_column(nullable=True)
     cycle_days: Mapped[Optional[int]] = mapped_column(default=5)
     created_at: Mapped[Optional[datetime.datetime]] = mapped_column(default=datetime.datetime.utcnow)
 
@@ -76,6 +77,7 @@ class InvoiceModel(Base):
     mobile: Mapped[Optional[str]] = mapped_column(nullable=True)
     address: Mapped[Optional[str]] = mapped_column(nullable=True)
     supervisor: Mapped[Optional[str]] = mapped_column(nullable=True)
+    gst_number: Mapped[Optional[str]] = mapped_column(nullable=True)
     invoice_date: Mapped[datetime.datetime] = mapped_column(nullable=False, default=datetime.datetime.utcnow)
     invoice_type: Mapped[Optional[str]] = mapped_column(default="SALES")
     waste_kg: Mapped[Optional[float]] = mapped_column(default=0.0)
@@ -140,6 +142,8 @@ def migrate_db():
         conn.execute(text("ALTER TABLE invoices ADD COLUMN IF NOT EXISTS mobile VARCHAR;"))
         conn.execute(text("ALTER TABLE invoices ADD COLUMN IF NOT EXISTS address VARCHAR;"))
         conn.execute(text("ALTER TABLE invoices ADD COLUMN IF NOT EXISTS supervisor VARCHAR;"))
+        conn.execute(text("ALTER TABLE invoices ADD COLUMN IF NOT EXISTS gst_number VARCHAR;"))
+        conn.execute(text("ALTER TABLE shops ADD COLUMN IF NOT EXISTS gst_number VARCHAR;"))
         conn.commit()
 
 migrate_db()
@@ -174,6 +178,7 @@ class ShopCreate(BaseModel):
     location: Optional[str] = None
     supervisor: Optional[str] = None
     contact: Optional[str] = None
+    gst_number: Optional[str] = None
     cycle_days: Optional[int] = 5
 
 
@@ -211,6 +216,7 @@ class InvoiceCreate(BaseModel):
     contact: Optional[str] = None
     mobile: Optional[str] = None
     address: Optional[str] = None
+    gst_number: Optional[str] = None
     invoice_date: Optional[str] = None
     invoice_type: Optional[str] = "SALES"
     truck_no: Optional[str] = None
@@ -327,11 +333,21 @@ def get_dashboard(db: Session = Depends(get_db)):
 def get_shops(search: Optional[str] = None, district: Optional[str] = None, db: Session = Depends(get_db)):
     query = db.query(ShopModel)
     if search:
-        query = query.filter((ShopModel.name.ilike(f"%{search}%")) | (ShopModel.shop_no.ilike(f"%{search}%")))
+        query = query.filter((ShopModel.name.ilike(f"%{search}%")) | (ShopModel.shop_no.ilike(f"%{search}%")) | (ShopModel.gst_number.ilike(f"%{search}%")))
     if district:
         query = query.filter(ShopModel.district.ilike(f"%{district}%"))
     shops = query.all()
-    return [{"id": s.id, "shop_no": s.shop_no, "name": s.name, "district": s.district, "location": s.location, "supervisor": s.supervisor, "contact": s.contact, "cycle_days": s.cycle_days} for s in shops]
+    return [{
+        "id": s.id, 
+        "shop_no": s.shop_no, 
+        "name": s.name, 
+        "district": s.district, 
+        "location": s.location, 
+        "supervisor": s.supervisor, 
+        "contact": s.contact, 
+        "gst_number": s.gst_number,
+        "cycle_days": s.cycle_days
+    } for s in shops]
 
 
 @app.post("/api/shops")
@@ -347,6 +363,7 @@ def create_shop(payload: ShopCreate, db: Session = Depends(get_db)):
         location=payload.location,
         supervisor=payload.supervisor,
         contact=payload.contact,
+        gst_number=payload.gst_number,
         cycle_days=payload.cycle_days or 5
     )
     db.add(new_shop)
@@ -368,6 +385,7 @@ def update_shop(shop_id: int, payload: ShopCreate, db: Session = Depends(get_db)
     shop.location = payload.location
     shop.supervisor = payload.supervisor
     shop.contact = payload.contact
+    shop.gst_number = payload.gst_number
     shop.cycle_days = payload.cycle_days or 5
 
     db.commit()
@@ -571,6 +589,7 @@ def get_invoices(db: Session = Depends(get_db)):
             "location": i.address or (i.shop.location if i.shop else ""),
             "supervisor": i.supervisor,
             "contact": i.mobile,
+            "gst_number": i.gst_number or (i.shop.gst_number if i.shop else ""),
             "waste_kg": i.waste_kg or 0.0,
             "taxable_amount": i.taxable_amount or 0.0,
             "total_amount": tot,
@@ -600,6 +619,7 @@ def get_single_invoice(invoice_id: int, db: Session = Depends(get_db)):
         "location": i.address or "",
         "supervisor": i.supervisor,
         "contact": i.mobile,
+        "gst_number": i.gst_number or "",
         "waste_kg": i.waste_kg or 0.0,
         "taxable_amount": i.taxable_amount or 0.0,
         "total_amount": i.total_amount or 0.0,
@@ -644,6 +664,7 @@ def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)):
         mobile=payload.contact or payload.mobile,
         address=payload.location or payload.address,
         supervisor=payload.supervisor,
+        gst_number=payload.gst_number,
         invoice_date=inv_dt,
         invoice_type=payload.invoice_type or "SALES",
         waste_kg=payload.waste_kg or 0.0,
@@ -687,6 +708,8 @@ def update_invoice(invoice_id: int, payload: InvoiceCreate, db: Session = Depend
         inv.supervisor = payload.supervisor
     if payload.contact:
         inv.mobile = payload.contact
+    if payload.gst_number is not None:
+        inv.gst_number = payload.gst_number
     if payload.taxable_amount is not None:
         inv.taxable_amount = payload.taxable_amount
     if payload.total_amount is not None:
@@ -1132,6 +1155,51 @@ def delete_expense(expense_id: int, db: Session = Depends(get_db)):
     db.delete(expense)
     db.commit()
     return {"message": "Expense deleted successfully"}
+
+
+# --- COMPANIES ENDPOINT ---
+@app.get("/api/companies")
+@app.get("/companies")
+def get_companies_list(db: Session = Depends(get_db)):
+    shops = db.query(ShopModel).all()
+    invoices = db.query(InvoiceModel).all()
+    company_dict = {}
+    
+    for s in shops:
+        company_dict[s.name] = {
+            "name": s.name,
+            "location": s.location or s.district or "—",
+            "contact": s.contact or "—",
+            "supervisor": s.supervisor or "—"
+        }
+        
+    for inv in invoices:
+        name = inv.party_name or inv.customer_name
+        if name and name not in company_dict:
+            company_dict[name] = {
+                "name": name,
+                "location": inv.address or "—",
+                "contact": inv.mobile or "—",
+                "supervisor": inv.supervisor or "—"
+            }
+            
+    return list(company_dict.values())
+
+
+# --- SETTINGS ENDPOINT ---
+@app.get("/api/settings")
+@app.get("/settings")
+def get_all_settings(db: Session = Depends(get_db)):
+    settings = db.query(SettingModel).all()
+    settings_map = {}
+    for s in settings:
+        settings_map[s.key] = s.value
+        
+    return {
+        "cgst_percent": float(settings_map.get("cgst_percent", 2.5)),
+        "sgst_percent": float(settings_map.get("sgst_percent", 2.5)),
+        "opening_balance": float(settings_map.get("opening_balance", 0.0))
+    }
 
 
 if __name__ == "__main__":

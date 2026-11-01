@@ -105,7 +105,7 @@ export default function PaymentManagement({
     let totalPurchaseWithGst = 0;
     let runningOpeningBalance = Number(openingBalance || 0);
 
-    const list = safeExtractArray(purchaseData).map((inv) => {
+    const rawList = safeExtractArray(purchaseData).map((inv) => {
       if (!inv) return null;
       const invoiceNo = inv.invoice_no || (inv.id ? `#ENTRY-${inv.id}` : '—');
       const shopNo = inv.shop_no || '—';
@@ -116,32 +116,20 @@ export default function PaymentManagement({
       const beerQty = Number(inv.beer_qty || 0);
       
       const totalAmount = Number(inv.total_amount || inv.grand_total || inv.amount || 0);
-      
-      let openingDeductedValue = runningOpeningBalance;
-      if (runningOpeningBalance > 0) {
-        runningOpeningBalance = Math.max(0, runningOpeningBalance - totalAmount);
-        openingDeductedValue = runningOpeningBalance;
-      } else {
-        openingDeductedValue = 0;
-      }
-
-      const netAfterDeduction = totalAmount;
       const paidFromPayments = paymentsByEntry[inv.id] || 0;
       const paidAmount = Number(inv.amount_paid || paidFromPayments);
-      const pendingAmount = Math.max(0, netAfterDeduction - paidAmount);
-
-      totalPurchaseWithGst += netAfterDeduction;
+      const pendingAmount = Math.max(0, totalAmount - paidAmount);
 
       return {
         ...inv,
+        idNum: Number(inv.id || 0),
         uniqueKey: `entry-${inv.id}`,
         invoice_no: invoiceNo,
         shop_no: shopNo,
         shop_name: shopName,
         display_date: rawDate !== 'N/A' ? new Date(rawDate).toLocaleDateString() : 'N/A',
         raw_date: rawDate,
-        totalAmount: netAfterDeduction,
-        openingDeducted: openingDeductedValue,
+        totalAmount,
         wasteKg,
         brandyQty,
         beerQty,
@@ -150,6 +138,26 @@ export default function PaymentManagement({
         type: 'entry'
       };
     }).filter(Boolean);
+
+    // Sort strictly by Date Ascending, then ID Ascending (Oldest First)
+    rawList.sort((a, b) => {
+      const dateA = a.raw_date !== 'N/A' ? new Date(a.raw_date).getTime() : 0;
+      const dateB = b.raw_date !== 'N/A' ? new Date(b.raw_date).getTime() : 0;
+      if (dateA !== dateB) return dateA - dateB;
+      return a.idNum - b.idNum;
+    });
+
+    const list = rawList.map((inv) => {
+      let openingDeductedValue = runningOpeningBalance;
+      if (runningOpeningBalance > 0) {
+        runningOpeningBalance = Math.max(0, runningOpeningBalance - inv.totalAmount);
+        openingDeductedValue = runningOpeningBalance;
+      } else {
+        openingDeductedValue = 0;
+      }
+      totalPurchaseWithGst += inv.totalAmount;
+      return { ...inv, openingDeducted: openingDeductedValue };
+    });
 
     const closingBalance = Math.max(0, Number(openingBalance || 0));
     return { list, totalPurchaseWithGst, closingBalance };
@@ -160,7 +168,7 @@ export default function PaymentManagement({
     let totalPaidAmount = 0;
     let runningOpeningBalance = Number(openingBalance || 0);
 
-    const list = safeExtractArray(salesData).map((inv) => {
+    const rawList = safeExtractArray(salesData).map((inv) => {
       if (!inv) return null;
       const invoiceNo = inv.invoice_no || inv.invoice_id || (inv.id ? `#INV-${inv.id}` : '—');
       const shopNo = inv.shop_no || '—';
@@ -169,15 +177,6 @@ export default function PaymentManagement({
       const wasteKg = Number(inv.waste_kg || 0);
 
       const totalAmount = Number(inv.total_amount || inv.grand_total || inv.amount || 0);
-      
-      let openingDeductedValue = runningOpeningBalance;
-      if (runningOpeningBalance > 0) {
-        runningOpeningBalance = Math.max(0, runningOpeningBalance - totalAmount);
-        openingDeductedValue = runningOpeningBalance;
-      } else {
-        openingDeductedValue = 0;
-      }
-
       const paidFromPayments = paymentsByInvoice[inv.id] || 0;
       const paidAmount = Math.max(Number(inv.amount_paid || 0), paidFromPayments);
       const pendingAmount = Math.max(0, totalAmount - paidAmount);
@@ -187,6 +186,7 @@ export default function PaymentManagement({
 
       return {
         ...inv,
+        idNum: Number(inv.id || 0),
         uniqueKey: `invoice-${inv.id}`,
         invoice_no: invoiceNo,
         shop_no: shopNo,
@@ -194,13 +194,31 @@ export default function PaymentManagement({
         display_date: rawDate !== 'N/A' ? new Date(rawDate).toLocaleDateString() : 'N/A',
         raw_date: rawDate,
         totalAmount,
-        openingDeducted: openingDeductedValue,
         wasteKg,
         paidAmount,
         pendingAmount,
         type: 'invoice'
       };
     }).filter(Boolean);
+
+    // Sort strictly by Date Ascending, then ID Ascending (Oldest First)
+    rawList.sort((a, b) => {
+      const dateA = a.raw_date !== 'N/A' ? new Date(a.raw_date).getTime() : 0;
+      const dateB = b.raw_date !== 'N/A' ? new Date(b.raw_date).getTime() : 0;
+      if (dateA !== dateB) return dateA - dateB;
+      return a.idNum - b.idNum;
+    });
+
+    const list = rawList.map((inv) => {
+      let openingDeductedValue = runningOpeningBalance;
+      if (runningOpeningBalance > 0) {
+        runningOpeningBalance = Math.max(0, runningOpeningBalance - inv.totalAmount);
+        openingDeductedValue = runningOpeningBalance;
+      } else {
+        openingDeductedValue = 0;
+      }
+      return { ...inv, openingDeducted: openingDeductedValue };
+    });
 
     const totalOutstanding = Math.max(0, totalSaleAmount - totalPaidAmount);
     const closingBalance = Math.max(0, Number(openingBalance || 0));
@@ -294,7 +312,6 @@ export default function PaymentManagement({
     });
   }, [activeTab, purchaseMetrics.list, salesMetrics.list, paymentHistoryList, penaltyList, searchQuery, selectedShop, startDate, endDate]);
 
-  // Computed totals for date-filtered print summary
   const filteredTotals = useMemo(() => {
     if (activeTab === 'history' || activeTab === 'penalty') {
       const totalAmt = filteredInvoices.reduce((sum, p) => sum + Number(p.amount || 0), 0);
