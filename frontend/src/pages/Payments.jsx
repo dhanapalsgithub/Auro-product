@@ -139,7 +139,6 @@ export default function PaymentManagement({
       };
     }).filter(Boolean);
 
-    // Sort strictly by Date Ascending, then ID Ascending (Oldest First)
     rawList.sort((a, b) => {
       const dateA = a.raw_date !== 'N/A' ? new Date(a.raw_date).getTime() : 0;
       const dateB = b.raw_date !== 'N/A' ? new Date(b.raw_date).getTime() : 0;
@@ -159,8 +158,7 @@ export default function PaymentManagement({
       return { ...inv, openingDeducted: openingDeductedValue };
     });
 
-    const closingBalance = Math.max(0, Number(openingBalance || 0));
-    return { list, totalPurchaseWithGst, closingBalance };
+    return { list, totalPurchaseWithGst };
   }, [purchaseData, openingBalance, paymentsByEntry]);
 
   const salesMetrics = useMemo(() => {
@@ -201,7 +199,6 @@ export default function PaymentManagement({
       };
     }).filter(Boolean);
 
-    // Sort strictly by Date Ascending, then ID Ascending (Oldest First)
     rawList.sort((a, b) => {
       const dateA = a.raw_date !== 'N/A' ? new Date(a.raw_date).getTime() : 0;
       const dateB = b.raw_date !== 'N/A' ? new Date(b.raw_date).getTime() : 0;
@@ -221,8 +218,7 @@ export default function PaymentManagement({
     });
 
     const totalOutstanding = Math.max(0, totalSaleAmount - totalPaidAmount);
-    const closingBalance = Math.max(0, Number(openingBalance || 0));
-    return { list, totalSaleAmount, totalPaidAmount, totalOutstanding, closingBalance };
+    return { list, totalSaleAmount, totalPaidAmount, totalOutstanding };
   }, [salesData, openingBalance, paymentsByInvoice]);
 
   const uniqueShops = useMemo(() => {
@@ -527,7 +523,7 @@ export default function PaymentManagement({
 
       <div className="no-print">
         {activeTab === 'purchase' ? (
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6">
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
               <p className="text-xs font-semibold text-slate-500 uppercase">Total Purchase Invoice (With GST)</p>
               <h2 className="text-xl sm:text-2xl font-bold text-slate-800 mt-1">₹{safeFormat(purchaseMetrics?.totalPurchaseWithGst)}</h2>
@@ -540,13 +536,9 @@ export default function PaymentManagement({
               <p className="text-xs font-semibold text-slate-500 uppercase">Total Penalty Deducted</p>
               <h2 className="text-xl sm:text-2xl font-bold text-rose-600 mt-1">₹{safeFormat(totalPenaltyAmount)}</h2>
             </div>
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <p className="text-xs font-semibold text-slate-500 uppercase">Closing Balance</p>
-              <h2 className="text-xl sm:text-2xl font-bold text-indigo-600 mt-1">₹{safeFormat(purchaseMetrics?.closingBalance)}</h2>
-            </div>
           </div>
         ) : activeTab === 'sales' ? (
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6">
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
               <p className="text-xs font-semibold text-slate-500 uppercase">Total Sale Invoice Amount</p>
               <h2 className="text-xl sm:text-2xl font-bold text-slate-800 mt-1">₹{safeFormat(salesMetrics?.totalSaleAmount)}</h2>
@@ -558,10 +550,6 @@ export default function PaymentManagement({
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
               <p className="text-xs font-semibold text-slate-500 uppercase">Total Penalty Deducted</p>
               <h2 className="text-xl sm:text-2xl font-bold text-rose-600 mt-1">₹{safeFormat(totalPenaltyAmount)}</h2>
-            </div>
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <p className="text-xs font-semibold text-slate-500 uppercase">Closing Balance</p>
-              <h2 className="text-xl sm:text-2xl font-bold text-indigo-600 mt-1">₹{safeFormat(salesMetrics?.closingBalance)}</h2>
             </div>
           </div>
         ) : activeTab === 'penalty' ? (

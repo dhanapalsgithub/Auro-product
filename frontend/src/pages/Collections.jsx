@@ -120,8 +120,7 @@ export default function Collections() {
   const totalExpenses = Number(collectionsData?.total_expenses || 0);
   
   // Net Profit = total purchase + expense - sale invoice amount (totalRevenue)
-  const netProfit = totalPurchases + totalExpenses - totalRevenue;
-
+  const netProfit = totalRevenue - (totalPurchases + totalExpenses);
   const closingBalance = Math.max(0, currentOpeningBalance);
 
   const filtered = useMemo(() => {
