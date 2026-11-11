@@ -29,9 +29,18 @@ const exportToCsv = (filename, rows, headers) => {
   document.body.removeChild(link);
 };
 
+const safeExtractArray = (data) => {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.rows)) return data.rows;
+  if (Array.isArray(data?.items)) return data.items;
+  return [];
+};
+
 export default function Collections() {
   const [collectionsData, setCollectionsData] = useState(null);
   const [entriesData, setEntriesData] = useState([]);
+  const [paymentsData, setPaymentsData] = useState([]);
   const [initialOpeningBalance, setInitialOpeningBalance] = useState(0);
   const [remainingOpeningBalance, setRemainingOpeningBalance] = useState(0);
   const [search, setSearch] = useState("");
@@ -42,14 +51,18 @@ export default function Collections() {
     Promise.allSettled([
       api.get("/collections"),
       api.get("/entries"),
+      api.get("/payments"),
       api.get("/settings/opening-balance-breakdown")
-    ]).then(([colRes, entRes, obRes]) => {
+    ]).then(([colRes, entRes, payRes, obRes]) => {
       if (colRes.status === "fulfilled") setCollectionsData(colRes.value.data);
       if (entRes.status === "fulfilled") {
         const entArr = Array.isArray(entRes.value.data)
           ? entRes.value.data
           : entRes.value.data?.data || [];
         setEntriesData(entArr);
+      }
+      if (payRes.status === "fulfilled") {
+        setPaymentsData(safeExtractArray(payRes.value.data));
       }
       if (obRes.status === "fulfilled" && obRes.value.data) {
         const initialOb = Number(obRes.value.data.initial_opening_balance ?? obRes.value.data.opening_balance ?? 0);
@@ -60,6 +73,19 @@ export default function Collections() {
       }
     });
   }, []);
+
+  const totalPenaltyAmount = useMemo(() => {
+    return paymentsData.reduce((sum, p) => {
+      if (p && (p.mode === 'Penalty' || p.invoice_type === 'PENALTY')) {
+        return sum + Number(p.amount || 0);
+      }
+      return sum;
+    }, 0);
+  }, [paymentsData]);
+
+  const adjustedRemainingOpeningBalance = useMemo(() => {
+    return Math.max(0, remainingOpeningBalance - totalPenaltyAmount);
+  }, [remainingOpeningBalance, totalPenaltyAmount]);
 
   const entriesByShop = useMemo(() => {
     const shopMap = {};
@@ -125,7 +151,7 @@ export default function Collections() {
   const totalExpenses = Number(collectionsData?.total_expenses || 0);
   
   const netProfit = totalRevenue - (totalPurchases + totalExpenses);
-  const closingBalance = Math.max(0, remainingOpeningBalance);
+  const closingBalance = Math.max(0, adjustedRemainingOpeningBalance);
 
   const filtered = useMemo(() => {
     let result = rowsData;
@@ -233,7 +259,10 @@ export default function Collections() {
           </div>
           <div>
             <p className="text-xs text-slate-500 font-medium">Opening Balance</p>
-              <p className="text-lg font-bold text-indigo-600">{inr(closingBalance)}</p>
+            <p className="text-lg font-bold text-indigo-600">{inr(closingBalance)}</p>
+            {totalPenaltyAmount > 0 && (
+              <p className="text-[10px] text-rose-600">Penalty Deducted: {inr(totalPenaltyAmount)}</p>
+            )}
           </div>
         </div>
 
@@ -415,8 +444,8 @@ export default function Collections() {
             <div className="text-sm font-bold text-slate-900">{inr(totalRevenue)}</div>
           </div>
           <div>
-            <span className="font-semibold text-slate-500 uppercase">Net Profit:</span>
-            <div className={`text-sm font-bold ${netProfit < 0 ? "text-rose-600" : "text-slate-900"}`}>{inr(netProfit)}</div>
+            <span className="font-semibold text-slate-500 uppercase">Total Penalty:</span>
+            <div className="text-sm font-bold text-rose-600">{inr(totalPenaltyAmount)}</div>
           </div>
           <div>
             <span className="font-semibold text-slate-500 uppercase">Closing Balance Pool:</span>

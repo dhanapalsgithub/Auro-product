@@ -32,7 +32,6 @@ export default function PaymentManagement({ onRefresh }) {
   const [salesData, setSalesData] = useState([]);
   const [paymentsData, setPaymentsData] = useState([]);
   const [openingBalance, setOpeningBalance] = useState(0);
-  const [remainingOpeningBalance, setRemainingOpeningBalance] = useState(0);
   const [loading, setLoading] = useState(false);
 
   // Bulk Payment Modal State
@@ -67,10 +66,7 @@ export default function PaymentManagement({ onRefresh }) {
       
       if (obRes.status === 'fulfilled' && obRes.value.data) {
         const initialOb = Number(obRes.value.data.initial_opening_balance ?? obRes.value.data.opening_balance ?? 0);
-        const remainingOb = Number(obRes.value.data.remaining_opening_balance ?? initialOb);
-        
         setOpeningBalance(isNaN(initialOb) ? 0 : initialOb);
-        setRemainingOpeningBalance(isNaN(remainingOb) ? 0 : remainingOb);
       }
     } catch (err) {
       console.error("Failed to load data:", err);
@@ -103,6 +99,30 @@ export default function PaymentManagement({ onRefresh }) {
     });
     return map;
   }, [paymentsData]);
+
+  const paymentHistoryList = useMemo(() => {
+    return safeExtractArray(paymentsData).map((p) => {
+      const rawDate = p.payment_date || p.created_at || 'N/A';
+      const invNo = p.invoice_no || (p.invoice_id ? `#INV-${p.invoice_id}` : (p.entry_id ? `#ENTRY-${p.entry_id}` : (p.invoice_type === 'PENALTY' ? '#PENALTY' : '—')));
+      return {
+        ...p,
+        display_date: rawDate !== 'N/A' ? new Date(rawDate).toLocaleDateString() : 'N/A',
+        amount: Number(p.amount || 0),
+        mode: p.mode || 'UPI',
+        notes: p.notes || '—',
+        invoice_no: invNo,
+        raw_date: rawDate
+      };
+    });
+  }, [paymentsData]);
+
+  const penaltyList = useMemo(() => {
+    return paymentHistoryList.filter(p => p.mode === 'Penalty' || p.invoice_type === 'PENALTY');
+  }, [paymentHistoryList]);
+
+  const totalPenaltyAmount = useMemo(() => {
+    return penaltyList.reduce((sum, p) => sum + p.amount, 0);
+  }, [penaltyList]);
 
   const purchaseMetrics = useMemo(() => {
     let totalPurchaseWithGst = 0;
@@ -163,6 +183,11 @@ export default function PaymentManagement({ onRefresh }) {
 
     return { list, totalPurchaseWithGst };
   }, [purchaseData, openingBalance, paymentsByEntry]);
+
+  const remainingOpeningBalancePool = useMemo(() => {
+    const totalPurchase = purchaseMetrics.totalPurchaseWithGst || 0;
+    return Math.max(0, Number(openingBalance || 0) - totalPurchase - totalPenaltyAmount);
+  }, [openingBalance, purchaseMetrics.totalPurchaseWithGst, totalPenaltyAmount]);
 
   const salesMetrics = useMemo(() => {
     let totalSaleAmount = 0;
@@ -231,30 +256,6 @@ export default function PaymentManagement({ onRefresh }) {
     });
     return Array.from(shops);
   }, [purchaseMetrics.list, salesMetrics.list]);
-
-  const paymentHistoryList = useMemo(() => {
-    return safeExtractArray(paymentsData).map((p) => {
-      const rawDate = p.payment_date || p.created_at || 'N/A';
-      const invNo = p.invoice_no || (p.invoice_id ? `#INV-${p.invoice_id}` : (p.entry_id ? `#ENTRY-${p.entry_id}` : (p.invoice_type === 'PENALTY' ? '#PENALTY' : '—')));
-      return {
-        ...p,
-        display_date: rawDate !== 'N/A' ? new Date(rawDate).toLocaleDateString() : 'N/A',
-        amount: Number(p.amount || 0),
-        mode: p.mode || 'UPI',
-        notes: p.notes || '—',
-        invoice_no: invNo,
-        raw_date: rawDate
-      };
-    });
-  }, [paymentsData]);
-
-  const penaltyList = useMemo(() => {
-    return paymentHistoryList.filter(p => p.mode === 'Penalty' || p.invoice_type === 'PENALTY');
-  }, [paymentHistoryList]);
-
-  const totalPenaltyAmount = useMemo(() => {
-    return penaltyList.reduce((sum, p) => sum + p.amount, 0);
-  }, [penaltyList]);
 
   const filteredInvoices = useMemo(() => {
     if (activeTab === 'history' || activeTab === 'penalty') {
@@ -341,7 +342,7 @@ export default function PaymentManagement({ onRefresh }) {
     });
   }, [bulkAmount, activeTab, purchaseMetrics.list, salesMetrics.list, selectedBulkIds]);
 
- const handleBulkPaymentSubmit = async (e) => {
+  const handleBulkPaymentSubmit = async (e) => {
     e.preventDefault();
     let remaining = parseFloat(bulkAmount) || 0;
     const penalty = parseFloat(penaltyAmount) || 0;
@@ -349,8 +350,6 @@ export default function PaymentManagement({ onRefresh }) {
 
     setSubmittingPayment(true);
     try {
-      // இது FIFO முறைப்படி ஒவ்வொரு இன்வாய்ஸுக்கும் பேமெண்ட் செய்து, 
-      // மேலே நாம் மாற்றிய Backend லாஜிக் மூலம் Opening Balance-உடன் கூட்டிக் கொள்ளும்
       for (const item of bulkDistributionPreview) {
         if (item.appliedAmount > 0) {
           const payAmt = item.appliedAmount;
@@ -369,7 +368,6 @@ export default function PaymentManagement({ onRefresh }) {
         }
       }
 
-      // Penalty இருந்தால் அதை Opening Balance-லிருந்து கழிப்பது
       if (penalty > 0) {
         const penaltyPayload = {
           shop_id: null,
@@ -390,7 +388,7 @@ export default function PaymentManagement({ onRefresh }) {
       setPaymentNotes('');
       setPaymentDate(new Date().toISOString().split('T')[0]);
       setSelectedBulkIds({});
-      fetchData(); // டேட்டாவை ரெஃப்ரெஷ் செய்து புதிய Opening Balance-ஐக் காட்டவும்
+      fetchData();
     } catch (err) {
       console.error("Error submitting bulk payment:", err);
       alert(err?.response?.data?.detail || "Failed to record bulk payment.");
@@ -447,12 +445,12 @@ export default function PaymentManagement({ onRefresh }) {
       <tr>
         <td style="border: 1px solid black; padding: 6px; text-align: center;">${idx + 1}</td>
         <td style="border: 1px solid black; padding: 6px; font-weight: bold;">${inv.invoice_no || `#${inv.id}`}</td>
-        <td style="border: 1px solid black; padding: 6px;">${inv.shop_name || '—'}</td>
+        <td style="border: 1px solid black; padding: 6px;">${inv.shop_name || inv.notes || '—'}</td>
         <td style="border: 1px solid black; padding: 6px; text-align: center;">${inv.display_date || inv.raw_date || '—'}</td>
         <td style="border: 1px solid black; padding: 6px; text-align: right; font-weight: bold;">₹${safeFormat(inv.totalAmount || inv.amount)}</td>
         <td style="border: 1px solid black; padding: 6px; text-align: right; color: #047857; font-weight: bold;">₹${safeFormat(inv.paidAmount || 0)}</td>
         <td style="border: 1px solid black; padding: 6px; text-align: right; color: #b91c1c; font-weight: bold;">₹${safeFormat(inv.pendingAmount || 0)}</td>
-        <td style="border: 1px solid black; padding: 6px; text-align: center;">${inv.pendingAmount <= 0 ? 'Paid' : 'Pending'}</td>
+        <td style="border: 1px solid black; padding: 6px; text-align: center;">${inv.invoice_type === 'PENALTY' || inv.mode === 'Penalty' ? 'Penalty Deduction' : (inv.pendingAmount <= 0 ? 'Paid' : 'Pending')}</td>
       </tr>
     `).join("");
 
@@ -460,7 +458,7 @@ export default function PaymentManagement({ onRefresh }) {
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Auro Products - Payment & Invoice Summary Report</title>
+          <title>Auro Products - Payment & Penalty History Report</title>
           <style>
             body { font-family: sans-serif; padding: 20px; color: #000; }
             h1 { text-align: center; font-size: 18px; text-transform: uppercase; margin-bottom: 4px; }
@@ -473,13 +471,14 @@ export default function PaymentManagement({ onRefresh }) {
         </head>
         <body>
           <h1>Auro Products Billing Suite</h1>
-          <p>Payment & Invoice Summary Report (${activeTab.toUpperCase()})</p>
+          <p>Penalty & Opening Balance Deduction Report (${activeTab.toUpperCase()})</p>
           <p style="font-weight: bold; color: #1e40af;">Generated on: ${new Date().toLocaleString()}</p>
           
           <div class="summary" style="margin-bottom: 15px;">
             <div class="summary-row"><span>Initial Opening Balance:</span><strong>₹${safeFormat(openingBalance)}</strong></div>
-            <div class="summary-row" style="color: #d97706; border-top: 1px solid #e5e7eb;"><span>Remaining Opening Balance Pool:</span><strong>₹${safeFormat(remainingOpeningBalance)}</strong></div>
+            <div class="summary-row" style="color: #4b5563; border-top: 1px solid #e5e7eb;"><span>Total Purchase Deduction:</span><strong>₹${safeFormat(purchaseMetrics?.totalPurchaseWithGst)}</strong></div>
             <div class="summary-row" style="color: #b91c1c; border-top: 1px solid #e5e7eb;"><span>Total Penalty Deducted:</span><strong>₹${safeFormat(totalPenaltyAmount)}</strong></div>
+            <div class="summary-row" style="color: #d97706; border-top: 2px solid #000; font-size: 13px; font-weight: bold; padding-top: 6px;"><span>Remaining Opening Balance Pool:</span><strong>₹${safeFormat(remainingOpeningBalancePool)}</strong></div>
           </div>
 
           <table>
@@ -487,12 +486,12 @@ export default function PaymentManagement({ onRefresh }) {
               <tr>
                 <th style="text-align: center;">#</th>
                 <th>Invoice / ID</th>
-                <th>Shop Name</th>
+                <th>Shop Name / Notes</th>
                 <th style="text-align: center;">Date</th>
-                <th style="text-align: right;">Total Amount</th>
+                <th style="text-align: right;">Amount</th>
                 <th style="text-align: right;">Paid</th>
                 <th style="text-align: right;">Pending</th>
-                <th style="text-align: center;">Status</th>
+                <th style="text-align: center;">Type / Status</th>
               </tr>
             </thead>
             <tbody>
@@ -574,39 +573,45 @@ export default function PaymentManagement({ onRefresh }) {
 
       <div className="no-print">
         {activeTab === 'purchase' ? (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <p className="text-xs font-semibold text-slate-500 uppercase">Total Purchase Invoice (With GST)</p>
-              <h2 className="text-xl sm:text-2xl font-bold text-slate-800 mt-1">₹{safeFormat(purchaseMetrics?.totalPurchaseWithGst)}</h2>
+              <p className="text-xs font-semibold text-slate-500 uppercase">Initial Opening Balance</p>
+              <h2 className="text-xl sm:text-2xl font-bold text-slate-800 mt-1">₹{safeFormat(openingBalance)}</h2>
             </div>
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <p className="text-xs font-semibold text-slate-500 uppercase">Remaining Opening Balance Pool</p>
-              <h2 className="text-xl sm:text-2xl font-bold text-amber-600 mt-1">₹{safeFormat(remainingOpeningBalance)}</h2>
-              <p className="text-[10px] text-slate-400 mt-0.5">Initial Pool: ₹{safeFormat(openingBalance)}</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase">Total Purchase Invoice (With GST)</p>
+              <h2 className="text-xl sm:text-2xl font-bold text-indigo-600 mt-1">₹{safeFormat(purchaseMetrics?.totalPurchaseWithGst)}</h2>
             </div>
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
               <p className="text-xs font-semibold text-slate-500 uppercase">Total Penalty Deducted</p>
               <h2 className="text-xl sm:text-2xl font-bold text-rose-600 mt-1">₹{safeFormat(totalPenaltyAmount)}</h2>
             </div>
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+              <p className="text-xs font-semibold text-slate-500 uppercase">Remaining Opening Balance Pool</p>
+              <h2 className="text-xl sm:text-2xl font-bold text-amber-600 mt-1">₹{safeFormat(remainingOpeningBalancePool)}</h2>
+            </div>
           </div>
         ) : activeTab === 'sales' ? (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 sm:gap-4 mb-6">
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
               <p className="text-xs font-semibold text-slate-500 uppercase">Total Sale Invoice Amount</p>
               <h2 className="text-xl sm:text-2xl font-bold text-slate-800 mt-1">₹{safeFormat(salesMetrics?.totalSaleAmount)}</h2>
             </div>
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <p className="text-xs font-semibold text-slate-500 uppercase">Remaining Opening Balance Pool</p>
-              <h2 className="text-xl sm:text-2xl font-bold text-amber-600 mt-1">₹{safeFormat(remainingOpeningBalance)}</h2>
-              <p className="text-[10px] text-slate-400 mt-0.5">Initial Pool: ₹{safeFormat(openingBalance)}</p>
+              <p className="text-xs font-semibold text-slate-500 uppercase">Initial Opening Balance</p>
+              <h2 className="text-xl sm:text-2xl font-bold text-slate-700 mt-1">₹{safeFormat(openingBalance)}</h2>
             </div>
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
               <p className="text-xs font-semibold text-slate-500 uppercase">Total Penalty Deducted</p>
               <h2 className="text-xl sm:text-2xl font-bold text-rose-600 mt-1">₹{safeFormat(totalPenaltyAmount)}</h2>
             </div>
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+              <p className="text-xs font-semibold text-slate-500 uppercase">Remaining Opening Balance Pool</p>
+              <h2 className="text-xl sm:text-2xl font-bold text-amber-600 mt-1">₹{safeFormat(remainingOpeningBalancePool)}</h2>
+            </div>
           </div>
         ) : activeTab === 'penalty' ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-6">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4 mb-6">
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
               <p className="text-xs font-semibold text-slate-500 uppercase">Total Penalty Records</p>
               <h2 className="text-xl sm:text-2xl font-bold text-slate-800 mt-1">{penaltyList.length} Records</h2>
@@ -615,13 +620,17 @@ export default function PaymentManagement({ onRefresh }) {
               <p className="text-xs font-semibold text-slate-500 uppercase">Total Penalty Amount Deducted</p>
               <h2 className="text-xl sm:text-2xl font-bold text-rose-600 mt-1">₹{safeFormat(totalPenaltyAmount)}</h2>
             </div>
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+              <p className="text-xs font-semibold text-slate-500 uppercase">Remaining Opening Balance Pool</p>
+              <h2 className="text-xl sm:text-2xl font-bold text-amber-600 mt-1">₹{safeFormat(remainingOpeningBalancePool)}</h2>
+            </div>
           </div>
         ) : null}
 
         {/* FILTERS & TABS */}
         <div className="bg-white p-3 sm:p-4 rounded-xl border border-slate-200 shadow-sm mb-6">
           <div className="flex flex-col lg:flex-row items-stretch lg:items-center gap-3 mb-4">
-            <div className="relative flex-1">
+            {/* <div className="relative flex-1">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
@@ -630,20 +639,20 @@ export default function PaymentManagement({ onRefresh }) {
                 onChange={(e) => { setSearchQuery(e.target.value); setCurrentPage(1); }}
                 className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
               />
-            </div>
-
+            </div> */}
+{/* 
             {activeTab !== 'history' && activeTab !== 'penalty' && (
               <select
                 value={selectedShop}
                 onChange={(e) => { setSelectedShop(e.target.value); setCurrentPage(1); }}
-                className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-200"
               >
                 <option value="All">All Shops</option>
                 {uniqueShops.map((shop, i) => (
                   <option key={i} value={shop}>{shop}</option>
                 ))}
               </select>
-            )}
+            )} */}
 
             <div className="flex items-center gap-2 overflow-x-auto pb-1 lg:pb-0">
               <span className="text-xs text-slate-500 font-medium whitespace-nowrap">From:</span>
@@ -724,11 +733,11 @@ export default function PaymentManagement({ onRefresh }) {
                       <td className="py-3 px-4 font-mono text-xs font-bold text-indigo-600">{p.invoice_no}</td>
                       <td className="py-3 px-4 text-slate-500 whitespace-nowrap">{p.display_date}</td>
                       <td className="py-3 px-4">
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${p.mode === 'Penalty' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-700'}`}>
+                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${p.mode === 'Penalty' || p.invoice_type === 'PENALTY' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-700'}`}>
                           {p.mode}
                         </span>
                       </td>
-                      <td className={`py-3 px-4 font-bold whitespace-nowrap ${p.mode === 'Penalty' ? 'text-rose-600' : 'text-emerald-600'}`}>
+                      <td className={`py-3 px-4 font-bold whitespace-nowrap ${p.mode === 'Penalty' || p.invoice_type === 'PENALTY' ? 'text-rose-600' : 'text-emerald-600'}`}>
                         ₹{safeFormat(p.amount)}
                       </td>
                       <td className="py-3 px-4 text-slate-600">{p.notes}</td>
@@ -1052,24 +1061,28 @@ export default function PaymentManagement({ onRefresh }) {
       {/* PRINTABLE REPORT VIEW */}
       <div className="hidden print:block printable-report bg-white p-6">
         <div className="mb-4 pb-4 border-b border-slate-300">
-          <h2 className="text-2xl font-bold text-slate-900">Auro Products - Payment & Invoice Summary Report</h2>
+          <h2 className="text-2xl font-bold text-slate-900">Auro Products - Payment & Penalty History Report</h2>
           <p className="text-xs text-slate-600 mt-1">
             Generated on: {new Date().toLocaleString()} | Active Tab: {activeTab.toUpperCase()}
           </p>
         </div>
 
-        <div className="grid grid-cols-3 gap-4 mb-6 p-4 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+        <div className="grid grid-cols-4 gap-4 mb-6 p-4 bg-slate-50 border border-slate-200 rounded-lg text-xs">
           <div>
             <span className="font-semibold text-slate-500 uppercase">Initial Opening Balance:</span>
             <div className="text-sm font-bold text-slate-900">₹{safeFormat(openingBalance)}</div>
           </div>
           <div>
-            <span className="font-semibold text-slate-500 uppercase">Remaining Opening Balance Pool:</span>
-            <div className="text-sm font-bold text-amber-600">₹{safeFormat(remainingOpeningBalance)}</div>
+            <span className="font-semibold text-slate-500 uppercase">Total Purchase Deduction:</span>
+            <div className="text-sm font-bold text-indigo-700">₹{safeFormat(purchaseMetrics?.totalPurchaseWithGst)}</div>
           </div>
           <div>
             <span className="font-semibold text-slate-500 uppercase">Total Penalty Deducted:</span>
             <div className="text-sm font-bold text-rose-600">₹{safeFormat(totalPenaltyAmount)}</div>
+          </div>
+          <div>
+            <span className="font-semibold text-slate-500 uppercase">Remaining Opening Balance Pool:</span>
+            <div className="text-sm font-bold text-amber-600">₹{safeFormat(remainingOpeningBalancePool)}</div>
           </div>
         </div>
 
@@ -1077,12 +1090,12 @@ export default function PaymentManagement({ onRefresh }) {
           <thead>
             <tr className="bg-slate-100 border-b border-slate-300 font-bold text-slate-800">
               <th className="p-2">Invoice / ID</th>
-              <th className="p-2">Shop Name</th>
+              <th className="p-2">Shop Name / Notes</th>
               <th className="p-2">Date</th>
-              <th className="p-2 text-right">Total Amount</th>
+              <th className="p-2 text-right">Amount</th>
               <th className="p-2 text-right">Paid</th>
               <th className="p-2 text-right">Pending</th>
-              <th className="p-2">Status</th>
+              <th className="p-2">Type / Status</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200">
@@ -1096,12 +1109,12 @@ export default function PaymentManagement({ onRefresh }) {
               filteredInvoices.map((inv, idx) => (
                 <tr key={idx}>
                   <td className="p-2 font-bold">{inv.invoice_no || `#${inv.id}`}</td>
-                  <td className="p-2">{inv.shop_name || '—'}</td>
+                  <td className="p-2">{inv.shop_name || inv.notes || '—'}</td>
                   <td className="p-2">{inv.display_date || inv.raw_date || '—'}</td>
                   <td className="p-2 text-right font-bold">₹{safeFormat(inv.totalAmount || inv.amount)}</td>
                   <td className="p-2 text-right text-emerald-700">₹{safeFormat(inv.paidAmount || 0)}</td>
                   <td className="p-2 text-right text-rose-700 font-bold">₹{safeFormat(inv.pendingAmount || 0)}</td>
-                  <td className="p-2">{inv.pendingAmount <= 0 ? 'Paid' : 'Pending'}</td>
+                  <td className="p-2">{inv.invoice_type === 'PENALTY' || inv.mode === 'Penalty' ? 'Penalty Deduction' : (inv.pendingStatus <= 0 ? 'Paid' : 'Pending')}</td>
                 </tr>
               ))
             )}

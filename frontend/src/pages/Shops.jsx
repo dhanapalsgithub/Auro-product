@@ -34,6 +34,14 @@ const empty = {
   cycle_days: 5,
 };
 
+const safeExtractArray = (data) => {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.data)) return data.data;
+  if (Array.isArray(data?.rows)) return data.rows;
+  if (Array.isArray(data?.items)) return data.items;
+  return [];
+};
+
 export default function Shops() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -41,6 +49,7 @@ export default function Shops() {
   const [shops, setShops] = useState([]);
   const [districts, setDistricts] = useState([]);
   const [invoiceParties, setInvoiceParties] = useState([]);
+  const [paymentsData, setPaymentsData] = useState([]);
   const [search, setSearch] = useState(params.get("q") || "");
   const [district, setDistrict] = useState("");
   const [page, setPage] = useState(1);
@@ -84,6 +93,13 @@ export default function Shops() {
           ].sort();
           setInvoiceParties(names);
         }
+      })
+      .catch(() => {});
+
+    api
+      .get("/payments")
+      .then((res) => {
+        setPaymentsData(safeExtractArray(res.data));
       })
       .catch(() => {});
 
@@ -138,6 +154,22 @@ export default function Shops() {
         setDistricts([]);
       });
   }, []);
+
+  const totalPenaltyAmount = useMemo(() => {
+    return safeExtractArray(paymentsData).reduce((sum, p) => {
+      if (p && (p.mode === 'Penalty' || p.invoice_type === 'PENALTY')) {
+        return sum + Number(p.amount || 0);
+      }
+      return sum;
+    }, 0);
+  }, [paymentsData]);
+
+  const adjustedRemainingOpeningBalance = useMemo(() => {
+    const baseRemaining = deductionBreakdown?.remaining_opening_balance !== undefined
+      ? Number(deductionBreakdown.remaining_opening_balance)
+      : Number(globalOpening || 0);
+    return Math.max(0, baseRemaining - totalPenaltyAmount);
+  }, [deductionBreakdown, globalOpening, totalPenaltyAmount]);
 
   const filteredShops = useMemo(() => {
     return (shops || [])
@@ -250,7 +282,7 @@ export default function Shops() {
     }
   };
 
- const deleteOpeningHistoryLog = async (logId) => {
+  const deleteOpeningHistoryLog = async (logId) => {
     if (!window.confirm("Are you sure you want to delete this opening balance entry history?")) return;
     try {
       const res = await api.delete(`/settings/opening-balance-history/${logId}`);
@@ -259,7 +291,6 @@ export default function Shops() {
         if (res.data.history) setOpeningHistory(res.data.history);
       }
       
-      // Refresh breakdown and list data
       const breakdownRes = await api.get("/settings/opening-balance-breakdown");
       if (breakdownRes.data) {
         setDeductionBreakdown(breakdownRes.data);
@@ -337,7 +368,8 @@ export default function Shops() {
             <h3 style="margin-top: 0; text-transform: uppercase; font-size: 13px; border-bottom: 1px solid #ccc; padding-bottom: 4px;">Audit Summary</h3>
             <div class="summary-row"><span>Initial Opening Balance:</span><strong>₹${Number(deductionBreakdown.initial_opening_balance).toFixed(2)}</strong></div>
             <div class="summary-row" style="color: #047857; border-top: 1px solid #e5e7eb;"><span>Total Opening Balance Deducted:</span><strong>₹${Number(deductionBreakdown.total_deducted).toFixed(2)}</strong></div>
-            <div class="summary-row" style="font-weight: bold; font-size: 13px; border-top: 2px solid black; margin-top: 4px; padding-top: 4px;"><span>Remaining Opening Balance Pool:</span><span>₹${Number(deductionBreakdown.remaining_opening_balance).toFixed(2)}</span></div>
+            <div class="summary-row" style="color: #b91c1c; border-top: 1px solid #e5e7eb;"><span>Total Penalty Deducted:</span><strong>₹${Number(totalPenaltyAmount).toFixed(2)}</strong></div>
+            <div class="summary-row" style="font-weight: bold; font-size: 13px; border-top: 2px solid black; margin-top: 4px; padding-top: 4px;"><span>Remaining Opening Balance Pool:</span><span>₹${Number(adjustedRemainingOpeningBalance).toFixed(2)}</span></div>
           </div>
         </body>
       </html>
@@ -352,12 +384,12 @@ export default function Shops() {
       printWindow.print();
     };
 
-    // Fallback trigger if onload fired before assignment
     setTimeout(() => {
       printWindow.focus();
       printWindow.print();
     }, 500);
   };
+
   const deleteEntryItem = async (entryId) => {
     if (!window.confirm("Are you sure you want to delete this entry?")) return;
     try {
@@ -447,9 +479,7 @@ export default function Shops() {
             className="flex items-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm text-cyan-300 hover:bg-cyan-500/20 transition"
           >
             <IndianRupee className="h-4 w-4" /> Opening Balance{" "}
-            {deductionBreakdown?.remaining_opening_balance !== undefined
-              ? `(${inr(deductionBreakdown.remaining_opening_balance)})`
-              : globalOpening !== "" && `(${inr(globalOpening)})`}
+            {`(${inr(adjustedRemainingOpeningBalance)})`}
           </button>
         )}
 
@@ -504,7 +534,7 @@ export default function Shops() {
               setTypeFilter(e.target.value);
               setPage(1);
             }}
-            className="w-full rounded-xl bg-white/5 border border-white/10 py-2.5 px-4 text-sm outline-none focus:border-cyan-500/50"
+            className="w-full rounded-xl bg-slate-800 border border-white/20 py-2.5 px-4 text-sm text-slate-200 outline-none focus:border-cyan-500 cursor-pointer relative z-20"
           >
             <option value="all" className="bg-slate-900 text-slate-200">
               All Entries
@@ -526,7 +556,7 @@ export default function Shops() {
               setDistrict(e.target.value);
               setPage(1);
             }}
-            className="w-full rounded-xl bg-white/5 border border-white/10 py-2.5 px-4 text-sm outline-none focus:border-cyan-500/50"
+            className="w-full rounded-xl bg-slate-800 border border-white/20 py-2.5 px-4 text-sm text-slate-200 outline-none focus:border-cyan-500 cursor-pointer relative z-20"
           >
             <option value="" className="bg-slate-900 text-slate-200">
               All Districts
@@ -759,7 +789,7 @@ export default function Shops() {
                   onChange={(e) =>
                     setModal({ ...modal, cycle_days: parseInt(e.target.value) })
                   }
-                  className="mt-1 w-full rounded-lg bg-slate-50 border border-slate-200 py-2 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:bg-white transition"
+                  className="mt-1 w-full rounded-lg bg-slate-50 border border-slate-200 py-2 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:bg-white transition cursor-pointer"
                 >
                   <option value={2}>Every 2 days</option>
                   <option value={5}>Every 5 days</option>
@@ -798,7 +828,7 @@ export default function Shops() {
           />
           <form
             onSubmit={saveGlobalOpening}
-            className="glass relative z-10 w-full max-w-2xl rounded-2xl p-6 max-h-[90vh] overflow-y-auto"
+            className="glass relative z-10 w-full max-w-2xl rounded-2xl p-6 max-h-[90vh] overflow-y-auto bg-slate-900 border border-slate-700 shadow-2xl text-white"
           >
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-display text-lg font-semibold flex items-center gap-2 text-white">
@@ -811,8 +841,8 @@ export default function Shops() {
 
             <div className="p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-xl text-cyan-300 text-xs mb-4 flex justify-between items-center">
               <div>
-                <span className="font-bold">Dynamic FIFO Deduction Audit</span>
-                <p className="text-[11px] text-slate-400 mt-0.5">Deducted sequentially per entry based on user opening balance amount.</p>
+                <span className="font-bold">Dynamic FIFO & Penalty Deduction Audit</span>
+                <p className="text-[11px] text-slate-400 mt-0.5">Deducted sequentially per entry and including penalty deductions.</p>
               </div>
               <button
                 type="button"
@@ -843,7 +873,7 @@ export default function Shops() {
                   <select
                     value={mode}
                     onChange={(e) => setMode(e.target.value)}
-                    className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm text-cyan-400 outline-none focus:border-cyan-500/50 [color-scheme:dark]"
+                    className="mt-1 w-full rounded-lg bg-slate-800 border border-white/20 py-2.5 px-3 text-sm text-cyan-300 outline-none focus:border-cyan-500 cursor-pointer relative z-20"
                   >
                     <option value="replace" className="bg-slate-900 text-slate-200">Reset & Replace</option>
                     <option value="add" className="bg-slate-900 text-slate-200">Add to Existing</option>
@@ -961,7 +991,7 @@ export default function Shops() {
               <button
                 data-testid="save-global-opening-button"
                 disabled={updatingOpening}
-                className="w-2/3 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 py-3 font-semibold text-slate-900 active:scale-95 transition disabled:opacity-60"
+                className="w-2/3 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 py-3 font-semibold text-slate-900 active:scale-95 transition disabled:opacity-60 shadow-lg"
               >
                 {updatingOpening ? "Saving…" : "Save Opening Balance"}
               </button>
