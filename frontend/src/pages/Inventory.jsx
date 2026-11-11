@@ -3,9 +3,9 @@ import api from "@/lib/apiClient";
 import { PageHeader, Card } from "@/components/Shell";
 import Pager from "@/components/Pager";
 import { exportToCsv, fmtDate } from "@/lib/helpers";
-import { Boxes, Package, Scale, Store, Download, Search, Calendar, X } from "lucide-react";
+import { Boxes, Package, Scale, Store, Download, Search, X } from "lucide-react";
 
-const PAGE_SIZE = 5;
+const PAGE_SIZE = 10;
 
 export default function Inventory() {
   const [data, setData] = useState(null);
@@ -14,6 +14,7 @@ export default function Inventory() {
   const [search, setSearch] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [filterTab, setFilterTab] = useState("all"); // "all" | "active" | "inactive"
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
 
@@ -35,7 +36,7 @@ export default function Inventory() {
           api.get("/shops"),
         ]);
 
-        if (invRes.status === "fulfilled" && invRes.value?.data?.rows?.length > 0) {
+        if (invRes.status === "fulfilled" && invRes.value?.data) {
           setData(invRes.value.data);
         }
 
@@ -56,12 +57,13 @@ export default function Inventory() {
     loadData();
   }, []);
 
+  // Compute records for ALL registered shops regardless of entry status
   const computedRows = useMemo(() => {
-    const safeEntries = Array.isArray(entries) ? entries : [];
     const safeShops = Array.isArray(shops) ? shops : [];
+    const safeEntries = Array.isArray(entries) ? entries : [];
 
-    // Filter entries by date range before aggregating
-    const dateFilteredEntries = safeEntries.filter((entry) => {
+    // Filter entries by date range if provided
+    const filteredEntries = safeEntries.filter((entry) => {
       if (!entry) return false;
       const entryDateStr = entry.entry_date || entry.created_at;
       if (!entryDateStr) return true;
@@ -76,91 +78,102 @@ export default function Inventory() {
       return true;
     });
 
-    if (!dateFilteredEntries.length && (startDate || endDate)) return [];
-
-    // Fall back to server pre-aggregated data only if no date filter is applied
-    if (!startDate && !endDate && (data?.rows || data?.records)) {
-      return data.rows || data.records || [];
-    }
-
-    const shopMap = {};
-    safeShops.forEach((s) => {
-      if (s && s.id) shopMap[s.id] = s;
-    });
-
-    const aggregated = {};
-
-    dateFilteredEntries.forEach((entry) => {
+    // Aggregate entries by shop_id
+    const entryStatsMap = {};
+    filteredEntries.forEach((entry) => {
       const sId = entry.shop_id;
-      const shop = shopMap[sId] || {};
-      const shopNo = shop.shop_no || entry.shop_no || `Shop #${sId}`;
-      const name = shop.name || entry.shop_name || "Unknown Shop";
-      const location = shop.location || entry.location || "—";
+      if (!sId) return;
 
       const brandyQty = Number(entry.brandy_qty || 0);
       const beerQty = Number(entry.beer_qty || 0);
       const boxes = brandyQty + beerQty || Number(entry.quantity || entry.boxes || 0);
       const waste = Number(entry.waste_kg || entry.waste || 0);
+      const entryDate = entry.entry_date || entry.created_at;
 
-      if (!aggregated[sId]) {
-        aggregated[sId] = {
-          shop_id: sId,
-          shop_no: shopNo,
-          name: name,
-          location: location,
+      if (!entryStatsMap[sId]) {
+        entryStatsMap[sId] = {
           total_boxes: 0,
           total_waste: 0,
           entries: 0,
-          last_entry: entry.entry_date || entry.created_at,
+          last_entry: entryDate,
         };
       }
 
-      aggregated[sId].total_boxes += boxes;
-      aggregated[sId].total_waste += waste;
-      aggregated[sId].entries += 1;
+      entryStatsMap[sId].total_boxes += boxes;
+      entryStatsMap[sId].total_waste += waste;
+      entryStatsMap[sId].entries += 1;
 
-      if (
-        new Date(entry.entry_date || entry.created_at) >
-        new Date(aggregated[sId].last_entry)
-      ) {
-        aggregated[sId].last_entry = entry.entry_date || entry.created_at;
+      if (new Date(entryDate) > new Date(entryStatsMap[sId].last_entry)) {
+        entryStatsMap[sId].last_entry = entryDate;
       }
     });
 
-    return Object.values(aggregated);
-  }, [data, entries, shops, startDate, endDate]);
+    // Map over ALL registered shops to ensure 0-entry shops are displayed
+    return safeShops.map((shop) => {
+      const stats = entryStatsMap[shop.id] || {
+        total_boxes: 0,
+        total_waste: 0,
+        entries: 0,
+        last_entry: null,
+      };
 
+      return {
+        shop_id: shop.id,
+        shop_no: shop.shop_no || `Shop #${shop.id}`,
+        name: shop.name || "Unknown Shop",
+        location: shop.location || shop.district || "—",
+        total_boxes: stats.total_boxes,
+        total_waste: stats.total_waste,
+        entries: stats.entries,
+        last_entry: stats.last_entry,
+      };
+    });
+  }, [shops, entries, startDate, endDate]);
+
+  // Apply Search & Tab Filters
   const filtered = useMemo(() => {
-    if (!search) return computedRows;
-    const q = search.toLowerCase();
-    return computedRows.filter(
-      (r) =>
-        (r.shop_no && String(r.shop_no).toLowerCase().includes(q)) ||
-        (r.name && r.name.toLowerCase().includes(q)) ||
-        (r.location && r.location.toLowerCase().includes(q))
-    );
-  }, [computedRows, search]);
+    let result = computedRows;
+
+    if (filterTab === "active") {
+      result = result.filter((r) => r.entries > 0);
+    } else if (filterTab === "inactive") {
+      result = result.filter((r) => r.entries === 0);
+    }
+
+    if (search) {
+      const q = search.toLowerCase();
+      result = result.filter(
+        (r) =>
+          (r.shop_no && String(r.shop_no).toLowerCase().includes(q)) ||
+          (r.name && r.name.toLowerCase().includes(q)) ||
+          (r.location && r.location.toLowerCase().includes(q))
+      );
+    }
+
+    return result;
+  }, [computedRows, search, filterTab]);
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const rows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
+  const totalShopsCount = computedRows.length;
+  const activeShopsCount = useMemo(
+    () => computedRows.filter((r) => r.entries > 0).length,
+    [computedRows]
+  );
+  const inactiveShopsCount = totalShopsCount - activeShopsCount;
+
   const totalBoxes = useMemo(() => {
-    if (!startDate && !endDate && data?.total_boxes !== undefined) return data.total_boxes;
-    return computedRows.reduce((sum, r) => sum + Number(r.total_boxes || 0), 0);
-  }, [data, computedRows, startDate, endDate]);
+    const entryBoxes = computedRows.reduce((sum, r) => sum + Number(r.total_boxes || 0), 0);
+    return data?.total_boxes ?? entryBoxes;
+  }, [computedRows, data]);
 
   const totalWaste = useMemo(() => {
-    if (!startDate && !endDate && data?.total_waste !== undefined) return data.total_waste;
     return computedRows.reduce((sum, r) => sum + Number(r.total_waste || 0), 0);
-  }, [data, computedRows, startDate, endDate]);
-
-  const activeShops = useMemo(() => {
-    if (!startDate && !endDate && data?.active_shops !== undefined) return data.active_shops;
-    return computedRows.length;
-  }, [data, computedRows, startDate, endDate]);
+  }, [computedRows]);
 
   const doExport = () =>
-    exportToCsv("inventory.csv", computedRows, [
+    exportToCsv("inventory.csv", filtered, [
       { label: "Shop No", accessor: "shop_no" },
       { label: "Name", accessor: "name" },
       { label: "Location", accessor: "location" },
@@ -170,7 +183,7 @@ export default function Inventory() {
         accessor: (r) => Number(r.total_waste || 0).toFixed(2),
       },
       { label: "Entries", accessor: "entries" },
-      { label: "Last Entry", accessor: (r) => fmtDate(r.last_entry) },
+      { label: "Last Entry", accessor: (r) => (r.last_entry ? fmtDate(r.last_entry) : "No Entries") },
     ]);
 
   const Stat = ({ icon: Icon, label, value, accent }) => (
@@ -182,9 +195,7 @@ export default function Inventory() {
           </p>
           <p className="mt-2 font-display text-2xl font-bold">{value}</p>
         </div>
-        <div
-          className={`flex h-10 w-10 items-center justify-center rounded-xl ${accent}`}
-        >
+        <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${accent}`}>
           <Icon className="h-5 w-5" />
         </div>
       </div>
@@ -222,16 +233,59 @@ export default function Inventory() {
         />
         <Stat
           icon={Store}
-          label="Active Shops"
-          value={activeShops}
+          label="Active / Total Shops"
+          value={`${activeShopsCount} / ${totalShopsCount}`}
           accent="bg-amber-500/15 text-amber-300"
         />
       </div>
 
       <Card className="p-4 mb-4">
-        <div className="flex flex-col md:flex-row gap-4 items-center">
+        <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
+          {/* Tab Selection */}
+          <div className="flex items-center gap-1 rounded-xl bg-white/5 p-1 border border-white/10 w-full md:w-auto">
+            <button
+              onClick={() => {
+                setFilterTab("all");
+                setPage(1);
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                filterTab === "all"
+                  ? "bg-cyan-500 text-white font-bold"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              All Shops ({totalShopsCount})
+            </button>
+            <button
+              onClick={() => {
+                setFilterTab("active");
+                setPage(1);
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                filterTab === "active"
+                  ? "bg-emerald-500 text-white font-bold"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              Active ({activeShopsCount})
+            </button>
+            <button
+              onClick={() => {
+                setFilterTab("inactive");
+                setPage(1);
+              }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition ${
+                filterTab === "inactive"
+                  ? "bg-rose-500 text-white font-bold"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              No Entries ({inactiveShopsCount})
+            </button>
+          </div>
+
           {/* Search Input */}
-          <div className="relative flex-1 w-full">
+          <div className="relative flex-1 w-full max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
             <input
               data-testid="inventory-search-input"
@@ -240,7 +294,7 @@ export default function Inventory() {
                 setSearch(e.target.value);
                 setPage(1);
               }}
-              placeholder="Search shop…"
+              placeholder="Search shop by no or location…"
               className="w-full rounded-xl bg-white/5 border border-white/10 py-2.5 pl-10 pr-4 text-sm outline-none focus:border-cyan-500/50"
             />
           </div>
@@ -248,7 +302,6 @@ export default function Inventory() {
           {/* Date Range Inputs */}
           <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
             <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2 text-sm w-full sm:w-auto">
-              {/* <Calendar className="h-4 w-4 text-slate-400 shrink-0" /> */}
               <input
                 type="date"
                 value={startDate}
@@ -256,9 +309,9 @@ export default function Inventory() {
                   setStartDate(e.target.value);
                   setPage(1);
                 }}
-                className="bg-transparent text-black-200 outline-none text-xs sm:text-sm"
+                className="bg-transparent text-slate-200 outline-none text-xs sm:text-sm"
               />
-              <span className="text-black-500">to</span>
+              <span className="text-slate-500">to</span>
               <input
                 type="date"
                 value={endDate}
@@ -266,7 +319,7 @@ export default function Inventory() {
                   setEndDate(e.target.value);
                   setPage(1);
                 }}
-                className="bg-transparent text-black-200 outline-none text-xs sm:text-sm"
+                className="bg-transparent text-slate-200 outline-none text-xs sm:text-sm"
               />
             </div>
 
@@ -310,7 +363,7 @@ export default function Inventory() {
               ) : rows.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="p-8 text-center text-slate-500">
-                    No inventory data found.
+                    No shops found matching the selected filters.
                   </td>
                 </tr>
               ) : (
@@ -331,9 +384,19 @@ export default function Inventory() {
                     <td className="p-4 text-right font-mono text-emerald-300">
                       {Number(r.total_waste || 0).toFixed(2)}
                     </td>
-                    <td className="p-4 text-center">{r.entries ?? 1}</td>
+                    <td className="p-4 text-center">
+                      <span
+                        className={`inline-block px-2 py-0.5 rounded text-xs font-mono ${
+                          r.entries > 0
+                            ? "bg-emerald-500/10 text-emerald-400"
+                            : "bg-slate-500/10 text-slate-400"
+                        }`}
+                      >
+                        {r.entries}
+                      </span>
+                    </td>
                     <td className="p-4 text-slate-400 font-mono">
-                      {fmtDate(r.last_entry || r.created_at)}
+                      {r.last_entry ? fmtDate(r.last_entry) : <span className="text-slate-600">No entry</span>}
                     </td>
                   </tr>
                 ))

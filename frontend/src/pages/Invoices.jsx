@@ -145,14 +145,35 @@ export default function Invoices() {
     }).catch(() => {});
   }, []);
 
-  // Fetch entries on date selection and notify if already billed
+  // Fetch entries on date selection and subtract already billed quantities for the same date
+ // Fetch entries, calculate available/remaining items, and show details in pop-up
   useEffect(() => {
     if (modal && invDate && !editId) {
-      if (existingInvoiceForDate) {
-        toast.error(`Invoice closed for this date (${invDate}). Already billed under ${existingInvoiceForDate.invoice_no}!`);
-      }
+      const invoicesOnThisDate = invoices.filter((inv) => {
+        const d = inv.invoice_date ? inv.invoice_date.slice(0, 10) : "";
+        return d === invDate;
+      });
 
-      api.get("/entries", { params: { date: invDate, shop_id: shopId || undefined } })
+      let alreadyBilledBrandy = 0;
+      let alreadyBilledBeer = 0;
+      let alreadyBilledWeight = 0;
+      let existingDetailsText = "";
+
+      invoicesOnThisDate.forEach((inv) => {
+        if (inv.items && Array.isArray(inv.items)) {
+          inv.items.forEach((it) => {
+            const desc = (it.description || "").toLowerCase();
+            if (desc.includes("brandy")) {
+              alreadyBilledBrandy += Number(it.quantity || 0);
+            } else if (desc.includes("beer")) {
+              alreadyBilledBeer += Number(it.quantity || 0);
+            }
+          });
+        }
+        alreadyBilledWeight += Number(inv.waste_kg || inv.total_weight || 0);
+      });
+
+      api.get("/entries", { params: { date: invDate } })
         .then((res) => {
           const entryList = safeExtractArray(res);
           let totalBrandy = 0;
@@ -168,16 +189,42 @@ export default function Invoices() {
                 totalBrandy += Number(e.quantity);
               }
             });
-            if (!existingInvoiceForDate) {
-              toast.success(`Loaded box entries for ${invDate}`);
-            }
           }
-          setBeerQty(totalBeer);
-          setBrandyQty(totalBrandy);
-          if (apiTotalWeight > 0) {
-            setTotalWeight(apiTotalWeight.toFixed(2));
+
+          // Calculate Remaining / Available Quantities
+          const availableBrandy = Math.max(0, totalBrandy - alreadyBilledBrandy);
+          const availableBeer = Math.max(0, totalBeer - alreadyBilledBeer);
+          const availableWeight = Math.max(0, apiTotalWeight - alreadyBilledWeight);
+
+          setBeerQty(availableBeer);
+          setBrandyQty(availableBrandy);
+          
+          if (availableWeight > 0) {
+            setTotalWeight(availableWeight.toFixed(2));
           } else {
             setTotalWeight("0.00");
+          }
+
+          // If already billed, show detailed popup with previous bills and remaining boxes
+          if (invoicesOnThisDate.length > 0) {
+            let detailsList = invoicesOnThisDate.map(inv => {
+              let bQty = 0, brQty = 0;
+              if (inv.items && Array.isArray(inv.items)) {
+                inv.items.forEach((it) => {
+                  const desc = (it.description || "").toLowerCase();
+                  if (desc.includes("brandy")) brQty += Number(it.quantity || 0);
+                  else if (desc.includes("beer")) bQty += Number(it.quantity || 0);
+                });
+              }
+              return `• Inv No: ${inv.invoice_no}\n  Billed Beer: ${bQty} | Brandy: ${brQty}\n  Amount: ₹${Number(inv.total_amount || 0).toFixed(2)}`;
+            }).join("\n\n");
+
+            existingDetailsText = `Warning: Already ${invoicesOnThisDate.length} bill(s) created for ${invDate}:\n\n${detailsList}\n\n----------------------------------------\nREMAINING AVAILABLE STOCK FOR NEW BILL:\n• Beer Boxes: ${availableBeer} nos\n• Brandy Boxes: ${availableBrandy} nos\n• Available Weight: ${availableWeight.toFixed(2)} kg\n----------------------------------------\n\nDo you want to proceed to create a new additional bill?`;
+            
+            const confirmProceed = window.confirm(existingDetailsText);
+            if (!confirmProceed) {
+              setModal(false);
+            }
           }
         })
         .catch(() => {
@@ -186,7 +233,7 @@ export default function Invoices() {
           setTotalWeight("0.00");
         });
     }
-  }, [invDate, shopId, modal, editId, existingInvoiceForDate]);
+  }, [invDate, modal, editId, invoices]);
 
   const safeInvoices = Array.isArray(invoices) ? invoices : [];
   const pageCount = Math.max(1, Math.ceil(safeInvoices.length / PAGE_SIZE));
@@ -309,10 +356,17 @@ export default function Invoices() {
 
   const saveInvoice = async (e) => {
     e.preventDefault();
+
+    // Check if invoice already exists for this date, ask confirmation instead of blocking
     if (!editId && existingInvoiceForDate) {
-      toast.error(`Invoice closed for date ${invDate}. Already billed under ${existingInvoiceForDate.invoice_no}!`);
-      return;
+      const confirmProceed = window.confirm(
+        `Warning: An invoice (${existingInvoiceForDate.invoice_no}) has already been created for this date (${invDate}). Do you want to create a new additional bill for this date?`
+      );
+      if (!confirmProceed) {
+        return;
+      }
     }
+
     if (!partyName) { toast.error("Enter Party / Company Name"); return; }
 
     const addedDescriptions = new Set();
@@ -748,12 +802,12 @@ export default function Invoices() {
               <button type="button" onClick={() => setModal(false)}><X className="h-5 w-5 text-slate-500 hover:text-slate-700" /></button>
             </div>
 
-            {/* CLOSED INVOICE WARNING BANNER */}
+            {/* CLOSED INVOICE WARNING BANNER (INFORMATIONAL ONLY, DOES NOT BLOCK) */}
             {existingInvoiceForDate && (
-              <div className="mb-4 p-3 bg-red-50 border border-red-300 rounded-xl flex items-center gap-3 text-red-800">
-                <AlertCircle className="h-5 w-5 text-red-600 shrink-0" />
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-300 rounded-xl flex items-center gap-3 text-amber-900">
+                <AlertCircle className="h-5 w-5 text-amber-600 shrink-0" />
                 <div className="text-xs">
-                  <span className="font-bold">Invoice Closed for this Date!</span> An invoice (<span className="font-mono font-bold">{existingInvoiceForDate.invoice_no}</span>) has already been created for {invDate}.
+                  <span className="font-bold">Note:</span> An invoice (<span className="font-mono font-bold">{existingInvoiceForDate.invoice_no}</span>) already exists for {invDate}. Only available/unbilled entries are loaded. Saving will create an additional bill.
                 </div>
               </div>
             )}
@@ -807,7 +861,7 @@ export default function Invoices() {
                 <input type="text" placeholder="TN 01 AB 1234" value={truckNo} onChange={(e) => setTruckNo(e.target.value)} className="mt-1 w-full rounded-lg bg-white border border-slate-300 py-2.5 px-3 text-sm text-slate-800 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 placeholder:text-slate-400" />
               </div>
               <div>
-                <label className="text-xs text-purple-700 font-bold">Total waste Weight of the Day (kg)</label>
+                <label className="text-xs text-purple-700 font-bold">Available Waste Weight (kg)</label>
                 <input type="number" step="0.01" min="0" placeholder="Auto Loaded" value={totalWeight} onChange={(e) => setTotalWeight(e.target.value)} className="mt-1 w-full rounded-lg bg-purple-50 border border-purple-300 py-2.5 px-3 text-sm text-purple-900 font-bold outline-none font-mono" />
               </div>
             </div>
@@ -815,7 +869,7 @@ export default function Invoices() {
             {/* DAILY BOTTLE BOX ENTRIES TABLE WITH RATE PER KG */}
             <div className="mb-4 border border-slate-200 rounded-xl overflow-hidden bg-slate-50/50">
               <div className="bg-slate-100 px-3 py-2 border-b border-slate-200 font-semibold text-xs text-slate-700 flex justify-between items-center">
-                <span>Daily Box Entries Summary ({invDate})</span>
+                <span>Available Box Entries Summary ({invDate})</span>
                 <span className="text-[11px] font-mono text-cyan-700 font-bold">Calculations: Weight (kg) × Rate / kg</span>
               </div>
               
@@ -823,7 +877,7 @@ export default function Invoices() {
                 {/* 1st Row: Beer Box */}
                 <div className="grid grid-cols-12 gap-3 items-center bg-white p-2.5 rounded-lg border border-slate-200 shadow-xs">
                   <div className="col-span-12 sm:col-span-3 text-xs font-bold text-slate-800">
-                    Beer Box
+                    Beer Box (Avail)
                   </div>
                   <div className="col-span-4 sm:col-span-3">
                     <label className="text-[10px] text-slate-500 block">Weight (0.220 x nos)</label>
@@ -842,7 +896,7 @@ export default function Invoices() {
                 {/* 2nd Row: Brandy Box */}
                 <div className="grid grid-cols-12 gap-3 items-center bg-white p-2.5 rounded-lg border border-slate-200 shadow-xs">
                   <div className="col-span-12 sm:col-span-3 text-xs font-bold text-slate-800">
-                    Brandy Box
+                    Brandy Box (Avail)
                   </div>
                   <div className="col-span-4 sm:col-span-3">
                     <label className="text-[10px] text-slate-500 block">Weight (0.420 x nos)</label>
@@ -861,7 +915,7 @@ export default function Invoices() {
                 {/* 3rd Row: Total Weight Waste Generated */}
                 <div className="grid grid-cols-12 gap-3 items-center bg-white p-2.5 rounded-lg border border-slate-200 shadow-xs">
                   <div className="col-span-12 sm:col-span-3 text-xs font-bold text-slate-800">
-                    Total Weight Waste
+                    Available Weight Waste
                   </div>
                   <div className="col-span-4 sm:col-span-3">
                     <label className="text-[10px] text-slate-500 block">Total Weight</label>
@@ -887,9 +941,9 @@ export default function Invoices() {
               <div className="flex justify-between font-bold text-sm text-slate-900 pt-1 border-t border-slate-200"><span>Grand Total</span><span>₹{total.toFixed(2)}</span></div>
             </div>
 
-            <button type="submit" disabled={saving || (!editId && Boolean(existingInvoiceForDate))} 
-              className={`mt-5 w-full rounded-xl py-3 text-sm font-semibold text-white active:scale-95 transition shadow-sm ${!editId && existingInvoiceForDate ? 'bg-slate-400 cursor-not-allowed' : 'bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500'}`}>
-              {saving ? "Saving…" : (!editId && existingInvoiceForDate) ? "Invoice Closed for This Date" : editId ? "Update Sale Invoice" : "Create Sale Invoice"}
+            <button type="submit" disabled={saving} 
+              className="mt-5 w-full rounded-xl py-3 text-sm font-semibold text-white active:scale-95 transition shadow-sm bg-gradient-to-r from-cyan-600 to-emerald-600 hover:from-cyan-500 hover:to-emerald-500">
+              {saving ? "Saving…" : editId ? "Update Sale Invoice" : "Create Sale Invoice"}
             </button>
           </form>
         </div>

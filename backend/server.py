@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
+from sqlalchemy.orm import joinedload
 from sqlalchemy import create_engine, ForeignKey, text, func
 from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship, Mapped, mapped_column
 
@@ -167,9 +168,11 @@ def get_db():
 
 
 # --- PYDANTIC SCHEMAS ---
-
 class OpeningBalanceUpdate(BaseModel):
     opening_balance: float
+    mode: Optional[str] = "replace"
+    entry_date: Optional[str] = None
+    entered_by: Optional[str] = "Admin"
 
 class ShopCreate(BaseModel):
     shop_no: str
@@ -248,18 +251,64 @@ class ExpenseCreate(BaseModel):
 
 # --- SETTINGS / OPENING BALANCE ENDPOINTS ---
 
+class OpeningBalanceUpdate(BaseModel):
+    opening_balance: float
+    mode: Optional[str] = "replace"
+    entry_date: Optional[str] = None
+    entered_by: Optional[str] = "Admin"
+
 @app.post("/api/settings/opening-balance")
 @app.post("/settings/opening-balance")
 def update_opening_balance(payload: OpeningBalanceUpdate, db: Session = Depends(get_db)):
     setting = db.query(SettingModel).filter(SettingModel.key == "opening_balance").first()
+    history_setting = db.query(SettingModel).filter(SettingModel.key == "opening_balance_history").first()
+    
+    current_val = float(setting.value) if setting and setting.value else 0.0
+    input_val = float(payload.opening_balance)
+    
+    # Properly evaluate mode
+    if payload.mode and payload.mode.lower() == "add":
+        new_total = current_val + input_val
+    else:
+        new_total = input_val
+
+    # Update current opening balance setting
     if not setting:
-        setting = SettingModel(key="opening_balance", value=str(payload.opening_balance))
+        setting = SettingModel(key="opening_balance", value=str(new_total))
         db.add(setting)
     else:
-        setting.value = str(payload.opening_balance)
-    db.commit()
-    return {"message": "Opening balance updated successfully", "opening_balance": payload.opening_balance}
+        setting.value = str(new_total)
 
+    # Manage history log
+    history = []
+    if history_setting and history_setting.value:
+        try:
+            history = json.loads(history_setting.value)
+        except Exception:
+            history = []
+
+    new_log = {
+        "id": int(datetime.datetime.utcnow().timestamp() * 1000),
+        "amount": input_val,
+        "mode": payload.mode or "replace",
+        "total_after": new_total,
+        "entry_date": payload.entry_date or datetime.datetime.utcnow().isoformat(),
+        "entered_by": payload.entered_by or "Admin"
+    }
+    history.insert(0, new_log)
+
+    if not history_setting:
+        history_setting = SettingModel(key="opening_balance_history", value=json.dumps(history))
+        db.add(history_setting)
+    else:
+        history_setting.value = json.dumps(history)
+
+    db.commit()
+    return {
+        "message": "Opening balance updated successfully", 
+        "opening_balance": new_total,
+        "history": history
+    }
 @app.get("/api/settings/opening-balance")
 @app.get("/settings/opening-balance")
 def get_opening_balance(db: Session = Depends(get_db)):
@@ -283,7 +332,10 @@ def get_opening_balance(db: Session = Depends(get_db)):
 @app.get("/dashboard")
 def get_dashboard(db: Session = Depends(get_db)):
     total_shops = db.query(func.count(ShopModel.id)).scalar() or 0
-    total_boxes = db.query(func.coalesce(func.sum(EntryModel.quantity), 0.0)).scalar() or 0
+    
+    # டேட்டாபேஸில் உள்ள என்ட்ரிக்களின் மொத்த பாக்ஸ்களை மட்டும் நேరుாக எடுக்கவும் (மேனுவல் 127320 தேவையில்லை)
+    total_boxes = db.query(func.coalesce(func.sum(EntryModel.quantity), 0)).scalar() or 0
+    
     total_waste = db.query(func.coalesce(func.sum(EntryModel.waste_kg), 0.0)).scalar() or 0.0
     total_revenue = db.query(func.coalesce(func.sum(InvoiceModel.total_amount), 0.0)).filter(InvoiceModel.invoice_type == "SALES").scalar() or 0.0
 
@@ -327,7 +379,6 @@ def get_dashboard(db: Session = Depends(get_db)):
 
 
 # --- SHOPS ENDPOINTS ---
-
 @app.get("/api/shops")
 @app.get("/shops")
 def get_shops(search: Optional[str] = None, district: Optional[str] = None, db: Session = Depends(get_db)):
@@ -349,7 +400,56 @@ def get_shops(search: Optional[str] = None, district: Optional[str] = None, db: 
         "cycle_days": s.cycle_days
     } for s in shops]
 
+@app.get("/api/shops/districts")
+@app.get("/shops/districts")
+def get_shop_districts(db: Session = Depends(get_db)):
+    districts = db.query(ShopModel.district).filter(ShopModel.district != None).distinct().all()
+    return [d[0] for d in districts if d[0]]
 
+
+@app.get("/api/settings/opening-balance-breakdown")
+@app.get("/settings/opening-balance-breakdown")
+def get_opening_balance_deduction_breakdown(db: Session = Depends(get_db)):
+    setting = db.query(SettingModel).filter(SettingModel.key == "opening_balance").first()
+    base_opening = float(setting.value) if setting and setting.value else 0.0
+    
+    entries = db.query(EntryModel).options(joinedload(EntryModel.shop)).order_by(EntryModel.entry_date.asc(), EntryModel.id.asc()).all()
+
+    running_opening_pool = base_opening
+    breakdown = []
+    total_deducted = 0.0
+
+    for e in entries:
+        shop_no = e.shop.shop_no if e.shop else f"Shop #{e.shop_id}"
+        shop_name = e.shop.name if e.shop else "—"
+        tot_amt = float(e.total_amount or 0.0)
+
+        if running_opening_pool > 0 and tot_amt > 0:
+            deducted = min(running_opening_pool, tot_amt)
+            running_opening_pool -= deducted
+            total_deducted += deducted
+        else:
+            deducted = 0.0
+
+        net_payable = max(0.0, tot_amt - deducted)
+
+        breakdown.append({
+            "entry_id": e.id,
+            "entry_date": e.entry_date.isoformat() if e.entry_date else "",
+            "shop_no": shop_no,
+            "shop_name": shop_name,
+            "original_amount": tot_amt,
+            "opening_deducted": deducted,
+            "net_payable": net_payable,
+            "remaining_opening_pool": running_opening_pool
+        })
+
+    return {
+        "initial_opening_balance": base_opening,
+        "total_deducted": total_deducted,
+        "remaining_opening_balance": running_opening_pool,
+        "breakdown": breakdown
+    }
 @app.post("/api/shops")
 @app.post("/shops")
 def create_shop(payload: ShopCreate, db: Session = Depends(get_db)):
@@ -370,6 +470,46 @@ def create_shop(payload: ShopCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_shop)
     return {"message": "Shop created successfully", "id": new_shop.id}
+
+@app.delete("/api/settings/opening-balance-history/{log_id}")
+@app.delete("/settings/opening-balance-history/{log_id}")
+def delete_opening_balance_history(log_id: int, db: Session = Depends(get_db)):
+    history_setting = db.query(SettingModel).filter(SettingModel.key == "opening_balance_history").first()
+    setting = db.query(SettingModel).filter(SettingModel.key == "opening_balance").first()
+    
+    history = []
+    if history_setting and history_setting.value:
+        try:
+            history = json.loads(history_setting.value)
+        except Exception:
+            history = []
+            
+    # Filter out the history log matching the log_id
+    history = [h for h in history if h.get("id") != log_id]
+    
+    # Recalculate total opening balance from the remaining history logs
+    recalculated_total = sum([float(h.get("amount", 0)) for h in history]) if history else 0.0
+    
+    # Update current opening balance setting
+    if not setting:
+        setting = SettingModel(key="opening_balance", value=str(recalculated_total))
+        db.add(setting)
+    else:
+        setting.value = str(recalculated_total)
+        
+    # Update history setting
+    if not history_setting:
+        history_setting = SettingModel(key="opening_balance_history", value=json.dumps(history))
+        db.add(history_setting)
+    else:
+        history_setting.value = json.dumps(history)
+      
+    db.commit()
+    return {
+        "message": "Opening balance history deleted and recalculated successfully",
+        "opening_balance": recalculated_total,
+        "history": history
+    }
 
 
 @app.put("/api/shops/{shop_id}")
@@ -453,6 +593,17 @@ def create_entry(payload: EntryCreate, db: Session = Depends(get_db)):
             entry_dt = datetime.datetime.utcnow()
     else:
         entry_dt = datetime.datetime.utcnow()
+
+    if payload.shop_id:
+        start_dt = datetime.datetime(entry_dt.year, entry_dt.month, entry_dt.day)
+        end_dt = start_dt + datetime.timedelta(days=1)
+        existing = db.query(EntryModel).filter(
+            EntryModel.shop_id == payload.shop_id,
+            EntryModel.entry_date >= start_dt,
+            EntryModel.entry_date < end_dt
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="An entry for this shop on this date already exists!")
 
     total_qty = (payload.brandy_qty or 0) + (payload.beer_qty or 0)
     if total_qty == 0 and payload.quantity:
@@ -645,15 +796,15 @@ def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)):
     if inv_no:
         existing = db.query(InvoiceModel).filter(InvoiceModel.invoice_no == inv_no).first()
         if existing:
-            inv_no = None
+            raise HTTPException(status_code=400, detail=f"Invoice number '{inv_no}' already exists!")
 
     if not inv_no:
         last_inv = db.query(InvoiceModel).order_by(InvoiceModel.id.desc()).first()
         next_num = 1
         if last_inv and last_inv.invoice_no:
             parts = last_inv.invoice_no.split("-")
-            if parts[-1].isdigit():
-                next_num = int(parts[-1]) + 1
+            if parts[-1].strip().isdigit():
+                next_num = int(parts[-1].strip()) + 1
         inv_no = f"AP-INV-{next_num:05d}"
 
     new_inv = InvoiceModel(
@@ -698,6 +849,12 @@ def update_invoice(invoice_id: int, payload: InvoiceCreate, db: Session = Depend
     inv = db.query(InvoiceModel).filter(InvoiceModel.id == invoice_id).first()
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
+
+    if payload.invoice_no and payload.invoice_no != inv.invoice_no:
+        existing = db.query(InvoiceModel).filter(InvoiceModel.invoice_no == payload.invoice_no).first()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"Invoice number '{payload.invoice_no}' already exists!")
+        inv.invoice_no = payload.invoice_no
 
     if payload.party_name:
         inv.party_name = payload.party_name
@@ -744,6 +901,7 @@ def delete_invoice(invoice_id: int, db: Session = Depends(get_db)):
 
 
 # --- PAYMENT ENDPOINTS ---
+# --- PAYMENT ENDPOINTS ---
 
 @app.get("/api/payments")
 @app.get("/payments")
@@ -763,6 +921,7 @@ def get_payments(db: Session = Depends(get_db)):
             "invoice_id": p.invoice_id,
             "invoice_no": inv_no,
             "entry_id": p.entry_id,
+            "invoice_type": p.invoice_type,
             "amount": p.amount,
             "mode": p.mode,
             "payment_date": p.payment_date.isoformat() if p.payment_date else None,
@@ -770,17 +929,15 @@ def get_payments(db: Session = Depends(get_db)):
         })
     return result
 
-
 @app.post("/api/payments")
 @app.post("/payments")
 def create_payment(payload: PaymentCreate, db: Session = Depends(get_db)):
+    pay_dt = datetime.datetime.utcnow()
     if payload.payment_date:
         try:
             pay_dt = datetime.datetime.fromisoformat(payload.payment_date.replace("Z", "+00:00"))
         except Exception:
-            pay_dt = datetime.datetime.utcnow()
-    else:
-        pay_dt = datetime.datetime.utcnow()
+            pass
 
     new_payment = PaymentModel(
         shop_id=payload.shop_id,
@@ -792,9 +949,9 @@ def create_payment(payload: PaymentCreate, db: Session = Depends(get_db)):
         payment_date=pay_dt,
         notes=payload.notes
     )
-
     db.add(new_payment)
 
+    # 1. Update Invoice amount paid if invoice_id is present
     if payload.invoice_id:
         inv = db.query(InvoiceModel).filter(InvoiceModel.id == payload.invoice_id).first()
         if inv:
@@ -804,11 +961,43 @@ def create_payment(payload: PaymentCreate, db: Session = Depends(get_db)):
             elif inv.amount_paid > 0:
                 inv.status = "partial"
 
+    # 2. Add payment amount to Opening Balance pool (as requested)
+    setting = db.query(SettingModel).filter(SettingModel.key == "opening_balance").first()
+    current_ob = float(setting.value) if setting and setting.value else 0.0
+    new_ob = current_ob + float(payload.amount)
+
+    if not setting:
+        setting = SettingModel(key="opening_balance", value=str(new_ob))
+        db.add(setting)
+    else:
+        setting.value = str(new_ob)
+
+    # Optional: Log this addition in opening_balance_history
+    history_setting = db.query(SettingModel).filter(SettingModel.key == "opening_balance_history").first()
+    history = []
+    if history_setting and history_setting.value:
+        try:
+            history = json.loads(history_setting.value)
+        except Exception:
+            history = []
+
+    history.insert(0, {
+        "id": int(datetime.datetime.utcnow().timestamp() * 1000),
+        "amount": float(payload.amount),
+        "mode": "add_from_payment",
+        "total_after": new_ob,
+        "entry_date": pay_dt.isoformat(),
+        "entered_by": "System (Bulk Payment Addition)"
+    })
+
+    if not history_setting:
+        db.add(SettingModel(key="opening_balance_history", value=json.dumps(history)))
+    else:
+        history_setting.value = json.dumps(history)
+
     db.commit()
     db.refresh(new_payment)
-
-    return {"message": "Payment recorded successfully", "id": new_payment.id}
-
+    return {"message": "Payment recorded and added to opening balance successfully", "id": new_payment.id}
 
 @app.delete("/api/payments/{payment_id}")
 @app.delete("/payments/{payment_id}")
@@ -832,7 +1021,6 @@ def delete_payment(payment_id: int, db: Session = Depends(get_db)):
     db.delete(payment)
     db.commit()
     return {"message": "Payment deleted successfully"}
-
 
 # --- COLLECTIONS / LEDGER ENDPOINT ---
 
@@ -903,37 +1091,211 @@ def get_collections(db: Session = Depends(get_db)):
     }
 
 
-# --- REPORTS ENDPOINTS ---
+# --- REPORTS ENDPOINTS & ALL-UNSOLD ENDPOINT ---
+
+def calculate_stock_and_statuses(db: Session):
+    try:
+        all_historical_entries = db.query(EntryModel).options(joinedload(EntryModel.shop)).order_by(EntryModel.entry_date.asc(), EntryModel.id.asc()).all()
+        all_invoices_sorted = db.query(InvoiceModel).options(joinedload(InvoiceModel.items), joinedload(InvoiceModel.shop)).order_by(InvoiceModel.invoice_date.asc(), InvoiceModel.id.asc()).all()
+        all_entries_cumulative = db.query(EntryModel).all()
+        all_invoices_cumulative = db.query(InvoiceModel).options(joinedload(InvoiceModel.items)).all()
+
+        total_entries_qty = sum([float(e.quantity or 0) for e in all_entries_cumulative])
+        base_stock = 127320.0
+        total_stock_qty = base_stock + total_entries_qty
+        
+        raw_sold_beer = 0.0
+        raw_sold_brandy = 0.0
+        for inv in all_invoices_cumulative:
+            if not inv.invoice_type or inv.invoice_type.upper() not in ["PURCHASE", "PURCHASE_ENTRY"]:
+                if inv.items:
+                    for item in inv.items:
+                        desc = (item.description or "").lower()
+                        qty = float(item.quantity or 0)
+                        if "beer" in desc:
+                            raw_sold_beer += qty
+                        elif "brandy" in desc:
+                            raw_sold_brandy += qty
+                        else:
+                            raw_sold_beer += qty / 2.0
+                            raw_sold_brandy += qty / 2.0
+
+        raw_sold_stock = raw_sold_beer + raw_sold_brandy
+        sold_stock_qty = min(raw_sold_stock, total_stock_qty)
+        balance_stock_qty = max(0.0, total_stock_qty - sold_stock_qty)
+
+        base_beer = base_stock / 2.0
+        base_brandy = base_stock / 2.0
+
+        surplus_beer_to_allocate = max(0.0, raw_sold_beer - base_beer)
+        surplus_brandy_to_allocate = max(0.0, raw_sold_brandy - base_brandy)
+
+        entry_allocations = {}
+        for e in all_historical_entries:
+            b_qty = float(e.beer_qty or 0)
+            br_qty = float(e.brandy_qty or 0)
+            if b_qty == 0 and br_qty == 0 and e.quantity:
+                b_qty = float(e.quantity) / 2.0
+                br_qty = float(e.quantity) / 2.0
+
+            entry_allocations[e.id] = {
+                "entry": e,
+                "beer_total": b_qty,
+                "beer_remaining": b_qty,
+                "brandy_total": br_qty,
+                "brandy_remaining": br_qty,
+                "matched_invoices": set()
+            }
+
+        invoice_queue = []
+        for inv in all_invoices_sorted:
+            if not inv.invoice_type or inv.invoice_type.upper() not in ["PURCHASE", "PURCHASE_ENTRY"]:
+                if inv.items:
+                    for item in inv.items:
+                        inv_qty = float(item.quantity or 0)
+                        if inv_qty > 0 and inv.invoice_no:
+                            invoice_queue.append({"invoice_no": inv.invoice_no, "qty": inv_qty})
+
+        inv_ptr = 0
+        inv_rem = invoice_queue[0]["qty"] if invoice_queue else 0.0
+
+        for e_id, alloc in entry_allocations.items():
+            if inv_ptr >= len(invoice_queue):
+                break
+
+            if surplus_beer_to_allocate > 0 and alloc["beer_remaining"] > 0:
+                take_beer = min(alloc["beer_remaining"], surplus_beer_to_allocate)
+                alloc["beer_remaining"] -= take_beer
+                surplus_beer_to_allocate -= take_beer
+
+            if surplus_brandy_to_allocate > 0 and alloc["brandy_remaining"] > 0:
+                take_brandy = min(alloc["brandy_remaining"], surplus_brandy_to_allocate)
+                alloc["brandy_remaining"] -= take_brandy
+                surplus_brandy_to_allocate -= take_brandy
+
+            consumed_total = (alloc["beer_total"] - alloc["beer_remaining"]) + (alloc["brandy_total"] - alloc["brandy_remaining"])
+            temp_take = consumed_total
+            while temp_take > 0 and inv_ptr < len(invoice_queue):
+                cur_inv = invoice_queue[inv_ptr]
+                consumed = min(temp_take, inv_rem)
+                if consumed > 0:
+                    alloc["matched_invoices"].add(cur_inv["invoice_no"])
+                    temp_take -= consumed
+                    inv_rem -= consumed
+                if inv_rem <= 0:
+                    inv_ptr += 1
+                    if inv_ptr < len(invoice_queue):
+                        inv_rem = invoice_queue[inv_ptr]["qty"]
+                else:
+                    break
+
+        entry_status_map = {}
+        entry_invoice_map = {}
+        unsold_records = []
+
+        for e_id, alloc in entry_allocations.items():
+            e = alloc["entry"]
+            orig_qty = float(e.quantity or (alloc["beer_total"] + alloc["brandy_total"]))
+            rem_beer = alloc["beer_remaining"]
+            rem_brandy = alloc["brandy_remaining"]
+            rem_qty = rem_beer + rem_brandy
+
+            matched_invs = list(alloc["matched_invoices"])
+            inv_str = ", ".join(matched_invs) if matched_invs else "—"
+            shop_name = e.shop.name if e.shop and e.shop.name else "—"
+            date_str = e.entry_date.isoformat() if e.entry_date else ""
+
+            if rem_qty >= orig_qty:
+                entry_status_map[e.id] = "Unsold"
+                entry_invoice_map[e.id] = "—"
+                unsold_records.append({
+                    "id": e.id,
+                    "date": date_str,
+                    "shop_name": shop_name,
+                    "box_type": f"Beer: {int(rem_beer)} | Brandy: {int(rem_brandy)}",
+                    "quantity": orig_qty,
+                    "waste_kg": e.waste_kg or 0.0,
+                    "total_amount": e.total_amount or 0.0,
+                    "status": "Unsold",
+                    "invoice_no": "—"
+                })
+            elif rem_qty <= 0:
+                entry_status_map[e.id] = "Sold"
+                entry_invoice_map[e.id] = inv_str
+            else:
+                entry_status_map[e.id] = "Partially Sold"
+                entry_invoice_map[e.id] = inv_str
+                unsold_records.append({
+                    "id": e.id,
+                    "date": date_str,
+                    "shop_name": shop_name,
+                    "box_type": f"Beer: {int(rem_beer)} | Brandy: {int(rem_brandy)}",
+                    "quantity": rem_qty,
+                    "waste_kg": e.waste_kg or 0.0,
+                    "total_amount": (e.total_amount or 0.0) * (rem_qty / orig_qty) if orig_qty > 0 else 0.0,
+                    "status": "Unsold",
+                    "invoice_no": "—"
+                })
+
+        return {
+            "total_stock": total_stock_qty,
+            "sold_stock": sold_stock_qty,
+            "balance_stock": balance_stock_qty,
+            "entry_status_map": entry_status_map,
+            "entry_invoice_map": entry_invoice_map,
+            "unsold_records": unsold_records
+        }
+    except Exception as ex:
+        import traceback
+        traceback.print_exc()
+        return {
+            "total_stock": 0.0,
+            "sold_stock": 0.0,
+            "balance_stock": 0.0,
+            "entry_status_map": {},
+            "entry_invoice_map": {},
+            "unsold_records": []
+        }
 
 @app.get("/api/reports/daily")
 @app.get("/reports/daily")
-def get_daily_report(day: Optional[str] = None, db: Session = Depends(get_db)):
-    target_date = datetime.datetime.utcnow().date()
-    if day:
+def get_daily_report(day: Optional[str] = None, start_date: Optional[str] = None, end_date: Optional[str] = None, all_time: Optional[bool] = False, db: Session = Depends(get_db)):
+    if start_date and end_date:
         try:
-            target_date = datetime.date.fromisoformat(day)
+            start_dt = datetime.datetime.fromisoformat(start_date)
+            end_dt = datetime.datetime.fromisoformat(end_date) + datetime.timedelta(days=1)
         except Exception:
-            pass
+            target_date = datetime.datetime.utcnow().date()
+            start_dt = datetime.datetime(target_date.year, target_date.month, target_date.day)
+            end_dt = start_dt + datetime.timedelta(days=1)
+    else:
+        target_date = datetime.datetime.utcnow().date()
+        if day:
+            try:
+                target_date = datetime.date.fromisoformat(day)
+            except Exception:
+                pass
+        start_dt = datetime.datetime(target_date.year, target_date.month, target_date.day)
+        end_dt = start_dt + datetime.timedelta(days=1)
 
-    start_dt = datetime.datetime(target_date.year, target_date.month, target_date.day)
-    end_dt = start_dt + datetime.timedelta(days=1)
-
-    invoices = db.query(InvoiceModel).filter(
+    invoices = db.query(InvoiceModel).options(joinedload(InvoiceModel.items)).filter(
         InvoiceModel.invoice_date >= start_dt,
         InvoiceModel.invoice_date < end_dt
     ).all()
-
-    entries = db.query(EntryModel).filter(
+    entries = db.query(EntryModel).options(joinedload(EntryModel.shop)).filter(
         EntryModel.entry_date >= start_dt,
         EntryModel.entry_date < end_dt
     ).all()
+
+    stock_data = calculate_stock_and_statuses(db)
+    entry_status_map = stock_data["entry_status_map"]
+    entry_invoice_map = stock_data["entry_invoice_map"]
 
     purchase_invoice_total = 0.0
     sale_invoice_total = 0.0
     gst_collected_sales = 0.0
     gst_collected_purchase = 0.0
 
-    # Include entries as purchase invoices/GST
     for e in entries:
         tot = e.total_amount or 0.0
         taxable = e.taxable_amount or 0.0
@@ -943,6 +1305,7 @@ def get_daily_report(day: Optional[str] = None, db: Session = Depends(get_db)):
         purchase_invoice_total += tot
         gst_collected_purchase += gst
 
+    invoice_records = []
     for inv in invoices:
         tot = inv.total_amount or 0.0
         taxable = inv.taxable_amount or 0.0
@@ -955,18 +1318,51 @@ def get_daily_report(day: Optional[str] = None, db: Session = Depends(get_db)):
             sale_invoice_total += tot
             gst_collected_sales += gst
 
+        invoice_records.append({
+            "id": inv.id,
+            "invoice_no": inv.invoice_no,
+            "party_name": inv.party_name or inv.customer_name or "—",
+            "date": inv.invoice_date.isoformat() if inv.invoice_date else "",
+            "total_amount": tot,
+            "taxable_amount": taxable,
+            "gst_amount": gst,
+            "type": inv.invoice_type or "SALES",
+            "items": [{"description": it.description, "quantity": it.quantity, "rate": it.rate, "amount": it.amount} for it in inv.items]
+        })
+
+    records = []
+    for e in entries:
+        e_qty = float(e.quantity or 0)
+        records.append({
+            "id": e.id,
+            "date": e.entry_date.isoformat() if e.entry_date else "",
+            "shop_no": e.shop.shop_no if e.shop else "—",
+            "shop_name": e.shop.name if e.shop and e.shop.name else "—",
+            "box_type": e.box_type or "Cotton Box",
+            "quantity": e_qty,
+            "waste_kg": e.waste_kg or 0.0,
+            "total_amount": e.total_amount or 0.0,
+            "status": entry_status_map.get(e.id, "Unsold"),
+            "invoice_no": entry_invoice_map.get(e.id, "—")
+        })
+
     return {
-        "date": target_date.isoformat(),
+        "date": start_dt.date().isoformat(),
         "purchase_invoice_total": purchase_invoice_total,
         "sale_invoice_total": sale_invoice_total,
         "gst_collected_sales": gst_collected_sales,
-        "gst_collected_purchase": gst_collected_purchase
+        "gst_collected_purchase": gst_collected_purchase,
+        "total_stock": stock_data["total_stock"],
+        "sold_stock": stock_data["sold_stock"],
+        "balance_stock": stock_data["balance_stock"],
+        "records": records,
+        "invoices": invoice_records
     }
 
 
 @app.get("/api/reports/monthly")
 @app.get("/reports/monthly")
-def get_monthly_report(month: Optional[str] = None, db: Session = Depends(get_db)):
+def get_monthly_report(month: Optional[str] = None, all_time: Optional[bool] = False, db: Session = Depends(get_db)):
     today = datetime.datetime.utcnow()
     year, m = today.year, today.month
     if month:
@@ -983,22 +1379,24 @@ def get_monthly_report(month: Optional[str] = None, db: Session = Depends(get_db
     else:
         end_dt = datetime.datetime(year, m + 1, 1)
 
-    invoices = db.query(InvoiceModel).filter(
+    invoices = db.query(InvoiceModel).options(joinedload(InvoiceModel.items)).filter(
         InvoiceModel.invoice_date >= start_dt,
         InvoiceModel.invoice_date < end_dt
     ).all()
-
-    entries = db.query(EntryModel).filter(
+    entries = db.query(EntryModel).options(joinedload(EntryModel.shop)).filter(
         EntryModel.entry_date >= start_dt,
         EntryModel.entry_date < end_dt
     ).all()
+
+    stock_data = calculate_stock_and_statuses(db)
+    entry_status_map = stock_data["entry_status_map"]
+    entry_invoice_map = stock_data["entry_invoice_map"]
 
     purchase_invoice_total = 0.0
     sale_invoice_total = 0.0
     gst_collected_sales = 0.0
     gst_collected_purchase = 0.0
 
-    # Include entries as purchase invoices/GST
     for e in entries:
         tot = e.total_amount or 0.0
         taxable = e.taxable_amount or 0.0
@@ -1008,6 +1406,7 @@ def get_monthly_report(month: Optional[str] = None, db: Session = Depends(get_db
         purchase_invoice_total += tot
         gst_collected_purchase += gst
 
+    invoice_records = []
     for inv in invoices:
         tot = inv.total_amount or 0.0
         taxable = inv.taxable_amount or 0.0
@@ -1020,14 +1419,46 @@ def get_monthly_report(month: Optional[str] = None, db: Session = Depends(get_db
             sale_invoice_total += tot
             gst_collected_sales += gst
 
+        invoice_records.append({
+            "id": inv.id,
+            "invoice_no": inv.invoice_no,
+            "party_name": inv.party_name or inv.customer_name or "—",
+            "date": inv.invoice_date.isoformat() if inv.invoice_date else "",
+            "total_amount": tot,
+            "taxable_amount": taxable,
+            "gst_amount": gst,
+            "type": inv.invoice_type or "SALES",
+            "items": [{"description": it.description, "quantity": it.quantity, "rate": it.rate, "amount": it.amount} for it in inv.items]
+        })
+
+    records = []
+    for e in entries:
+        e_qty = float(e.quantity or 0)
+        records.append({
+            "id": e.id,
+            "date": e.entry_date.isoformat() if e.entry_date else "",
+            "shop_no": e.shop.shop_no if e.shop else "—",
+            "shop_name": e.shop.name if e.shop and e.shop.name else "—",
+            "box_type": e.box_type or "Cotton Box",
+            "quantity": e_qty,
+            "waste_kg": e.waste_kg or 0.0,
+            "total_amount": e.total_amount or 0.0,
+            "status": entry_status_map.get(e.id, "Unsold"),
+            "invoice_no": entry_invoice_map.get(e.id, "—")
+        })
+
     return {
         "month": f"{year:04d}-{m:02d}",
         "purchase_invoice_total": purchase_invoice_total,
         "sale_invoice_total": sale_invoice_total,
         "gst_collected_sales": gst_collected_sales,
-        "gst_collected_purchase": gst_collected_purchase
+        "gst_collected_purchase": gst_collected_purchase,
+        "total_stock": stock_data["total_stock"],
+        "sold_stock": stock_data["sold_stock"],
+        "balance_stock": stock_data["balance_stock"],
+        "records": records,
+        "invoices": invoice_records
     }
-
 
 # --- WASTE ANALYTICS ENDPOINTS ---
 

@@ -33,6 +33,7 @@ export default function Collections() {
   const [collectionsData, setCollectionsData] = useState(null);
   const [entriesData, setEntriesData] = useState([]);
   const [initialOpeningBalance, setInitialOpeningBalance] = useState(0);
+  const [remainingOpeningBalance, setRemainingOpeningBalance] = useState(0);
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(1);
   const [selectedDate, setSelectedDate] = useState("");
@@ -41,7 +42,7 @@ export default function Collections() {
     Promise.allSettled([
       api.get("/collections"),
       api.get("/entries"),
-      api.get("/settings/opening-balance")
+      api.get("/settings/opening-balance-breakdown")
     ]).then(([colRes, entRes, obRes]) => {
       if (colRes.status === "fulfilled") setCollectionsData(colRes.value.data);
       if (entRes.status === "fulfilled") {
@@ -50,8 +51,12 @@ export default function Collections() {
           : entRes.value.data?.data || [];
         setEntriesData(entArr);
       }
-      if (obRes.status === "fulfilled") {
-        setInitialOpeningBalance(Number(obRes.value.data?.opening_balance || 0));
+      if (obRes.status === "fulfilled" && obRes.value.data) {
+        const initialOb = Number(obRes.value.data.initial_opening_balance ?? obRes.value.data.opening_balance ?? 0);
+        const remainingOb = Number(obRes.value.data.remaining_opening_balance ?? initialOb);
+        
+        setInitialOpeningBalance(isNaN(initialOb) ? 0 : initialOb);
+        setRemainingOpeningBalance(isNaN(remainingOb) ? 0 : remainingOb);
       }
     });
   }, []);
@@ -119,9 +124,8 @@ export default function Collections() {
 
   const totalExpenses = Number(collectionsData?.total_expenses || 0);
   
-  // Net Profit = total purchase + expense - sale invoice amount (totalRevenue)
   const netProfit = totalRevenue - (totalPurchases + totalExpenses);
-  const closingBalance = Math.max(0, currentOpeningBalance);
+  const closingBalance = Math.max(0, remainingOpeningBalance);
 
   const filtered = useMemo(() => {
     let result = rowsData;
@@ -229,7 +233,7 @@ export default function Collections() {
           </div>
           <div>
             <p className="text-xs text-slate-500 font-medium">Opening Balance</p>
-            <p className="text-lg font-bold text-slate-900">{inr(currentOpeningBalance)}</p>
+              <p className="text-lg font-bold text-indigo-600">{inr(closingBalance)}</p>
           </div>
         </div>
 
@@ -260,7 +264,7 @@ export default function Collections() {
             <IndianRupee className="h-6 w-6" />
           </div>
           <div>
-            <p className="text-xs text-slate-500 font-medium">Closing Balance</p>
+            <p className="text-xs text-slate-500 font-medium">Closing Balance Pool</p>
             <p className="text-lg font-bold text-indigo-600">{inr(closingBalance)}</p>
           </div>
         </div>
@@ -415,7 +419,7 @@ export default function Collections() {
             <div className={`text-sm font-bold ${netProfit < 0 ? "text-rose-600" : "text-slate-900"}`}>{inr(netProfit)}</div>
           </div>
           <div>
-            <span className="font-semibold text-slate-500 uppercase">Closing Balance:</span>
+            <span className="font-semibold text-slate-500 uppercase">Closing Balance Pool:</span>
             <div className="text-sm font-bold text-indigo-600">{inr(closingBalance)}</div>
           </div>
         </div>

@@ -4,9 +4,7 @@ import api from "@/lib/apiClient";
 import { PageHeader, Card } from "@/components/Shell";
 import { inr, fmtDate } from "@/lib/helpers";
 import {
-  LayoutDashboard, Store, Package, Scale, IndianRupee,
-  AlertTriangle, Clock, CheckCircle2, ArrowUpRight, Calendar, X, MessageSquare,
-  ChevronLeft, ChevronRight
+  LayoutDashboard, MessageSquare, Calendar, X, ChevronLeft, ChevronRight
 } from "lucide-react";
 
 const STATUS = {
@@ -22,11 +20,13 @@ export default function Dashboard() {
   const [data, setData] = useState(null);
   const [reminderPage, setReminderPage] = useState(1);
   const [dateFilter, setDateFilter] = useState("");
-  const navigate = useNavigate();
+  const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
 
   useEffect(() => {
-    api.get("/dashboard").then((res) => setData(res.data)).catch(() => {});
-  }, []);
+    api.get("/dashboard", { params: { month: selectedMonth } })
+       .then((res) => setData(res.data))
+       .catch(() => {});
+  }, [selectedMonth]);
 
   const reminders = data?.reminders || [];
   const dueList = reminders.filter((r) => ["overdue", "due_today", "no_entry"].includes(r.status));
@@ -44,7 +44,19 @@ export default function Dashboard() {
 
   return (
     <div>
-      <PageHeader title="Dashboard & Reminders" subtitle="Cotton box pickup schedule across 149 TASMAC wine shops" icon={LayoutDashboard} />
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+        <PageHeader title="Dashboard & Reminders" subtitle="Cotton box pickup schedule across wine shops" icon={LayoutDashboard} />
+        
+        <div className="flex items-center gap-2 bg-white/5 border border-white/10 px-3 py-1.5 rounded-xl">
+          <Calendar className="h-4 w-4 text-slate-400" />
+          <input
+            type="month"
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            className="bg-transparent border-none text-xs outline-none text-slate-200 cursor-pointer"
+          />
+        </div>
+      </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <Card className="p-5"><p className="text-xs text-slate-500 font-mono">SHOPS</p><p className="text-2xl font-bold">{data?.shops_count ?? "—"}</p></Card>
@@ -68,6 +80,7 @@ export default function Dashboard() {
           ) : (
             paginatedReminders.map((r) => {
               const st = STATUS[r.status] || STATUS.upcoming;
+              const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(`Hello, gentle reminder for cotton box pickup at ${r.shop_no} - ${r.shop_name}. Next scheduled pickup is on ${fmtDate(r.next_pickup)}.`)}`;
               return (
                 <div key={r.shop_id} className="flex items-center gap-4 p-4 hover:bg-white/5">
                   <span className={`h-2.5 w-2.5 rounded-full ${st.dot}`} />
@@ -75,7 +88,7 @@ export default function Dashboard() {
                     <p className="font-medium truncate">{r.shop_no} · {r.shop_name}</p>
                     <p className="text-xs text-slate-500 truncate">Cycle {r.cycle_days}d · Next: {fmtDate(r.next_pickup)}</p>
                   </div>
-                  <a href={r.whatsapp_link} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 text-xs border border-emerald-500/30 hover:bg-emerald-500/30 transition">
+                  <a href={whatsappUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/20 text-emerald-300 text-xs border border-emerald-500/30 hover:bg-emerald-500/30 transition">
                     <MessageSquare className="h-3.5 w-3.5" /> WhatsApp Reminder
                   </a>
                 </div>

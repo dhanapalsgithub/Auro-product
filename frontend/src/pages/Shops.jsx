@@ -3,7 +3,7 @@ import { useSearchParams, useNavigate } from "react-router-dom";
 import api from "@/lib/apiClient";
 import { PageHeader, Card } from "@/components/Shell";
 import Pager from "@/components/Pager";
-import { exportToCsv, inr } from "@/lib/helpers";
+import { exportToCsv, inr, fmtDate } from "@/lib/helpers";
 import { toast } from "sonner";
 
 import {
@@ -18,12 +18,11 @@ import {
   Upload,
   IndianRupee,
   Calendar,
-  User,
   History,
+  Printer,
 } from "lucide-react";
 
 const PAGE_SIZE = 5;
-const HISTORY_PAGE_SIZE = 2;
 const empty = {
   shop_no: "",
   name: "",
@@ -50,33 +49,28 @@ export default function Shops() {
   const [openingModal, setOpeningModal] = useState(false);
   const [globalOpening, setGlobalOpening] = useState("");
   const [openingHistory, setOpeningHistory] = useState([]);
-  const [historyPage, setHistoryPage] = useState(1);
-  const [historyFromDate, setHistoryFromDate] = useState("");
-  const [historyToDate, setHistoryToDate] = useState("");
+  const [deductionBreakdown, setDeductionBreakdown] = useState(null);
   const [enteredBy, setEnteredBy] = useState("");
   const [entryDate, setEntryDate] = useState(
     new Date().toISOString().slice(0, 10)
   );
-  const [mode, setMode] = useState("add");
+  const [mode, setMode] = useState("replace");
   const [saving, setSaving] = useState(false);
   const [updatingOpening, setUpdatingOpening] = useState(false);
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
 
-  // Admin Permission Flags
   const canEdit = localStorage.getItem("auro_can_edit") === "true";
   const canManageBalance =
     localStorage.getItem("auro_can_manage_balance") === "true";
 
   const load = () => {
-    // 1. Fetch Shops
     api
       .get("/shops", { params: { search, district } })
       .then((res) => {
         setShops(res.data);
       });
 
-    // 2. Fetch GST Invoices to get all unique party names
     api
       .get("/invoices")
       .then((res) => {
@@ -91,22 +85,8 @@ export default function Shops() {
           setInvoiceParties(names);
         }
       })
-      .catch(() => {
-        api.get("/api/invoices").then((res) => {
-          if (Array.isArray(res.data)) {
-            const names = [
-              ...new Set(
-                res.data
-                  .map((inv) => inv.party_name || inv.party || inv.customer_name)
-                  .filter(Boolean)
-              ),
-            ].sort();
-            setInvoiceParties(names);
-          }
-        }).catch(() => { });
-      });
+      .catch(() => {});
 
-    // 3. Fetch Opening Balance Settings
     api
       .get("/settings/opening-balance")
       .then((res) => {
@@ -119,7 +99,16 @@ export default function Shops() {
           }
         }
       })
-      .catch(() => { });
+      .catch(() => {});
+
+    api
+      .get("/settings/opening-balance-breakdown")
+      .then((res) => {
+        if (res.data) {
+          setDeductionBreakdown(res.data);
+        }
+      })
+      .catch(() => {});
   };
 
   useEffect(() => {
@@ -127,15 +116,16 @@ export default function Shops() {
   }, [search, district]);
 
   useEffect(() => {
-    api.get("/shops/districts")
+    api
+      .get("/shops/districts")
       .then((r) => {
         const rawData = Array.isArray(r.data)
           ? r.data
           : Array.isArray(r.data?.districts)
-            ? r.data.districts
-            : Array.isArray(r.data?.data)
-              ? r.data.data
-              : [];
+          ? r.data.districts
+          : Array.isArray(r.data?.data)
+          ? r.data.data
+          : [];
 
         const sortedDistricts = [...rawData].sort((a, b) =>
           String(a).localeCompare(String(b))
@@ -244,6 +234,11 @@ export default function Shops() {
         setGlobalOpening(res.data.opening_balance);
         if (res.data.history) setOpeningHistory(res.data.history);
       }
+      
+      const breakdownRes = await api.get("/settings/opening-balance-breakdown");
+      if (breakdownRes.data) {
+        setDeductionBreakdown(breakdownRes.data);
+      }
 
       toast.success("Opening balance updated & history recorded successfully");
       setOpeningModal(false);
@@ -252,6 +247,125 @@ export default function Shops() {
       toast.error("Failed to update opening balance");
     } finally {
       setUpdatingOpening(false);
+    }
+  };
+
+ const deleteOpeningHistoryLog = async (logId) => {
+    if (!window.confirm("Are you sure you want to delete this opening balance entry history?")) return;
+    try {
+      const res = await api.delete(`/settings/opening-balance-history/${logId}`);
+      if (res.data) {
+        setGlobalOpening(res.data.opening_balance);
+        if (res.data.history) setOpeningHistory(res.data.history);
+      }
+      
+      // Refresh breakdown and list data
+      const breakdownRes = await api.get("/settings/opening-balance-breakdown");
+      if (breakdownRes.data) {
+        setDeductionBreakdown(breakdownRes.data);
+      }
+      
+      toast.success("Opening balance history deleted & recalculated successfully");
+      load();
+    } catch (err) {
+      toast.error("Failed to delete opening balance history");
+    }
+  };
+
+  const triggerA4Print = () => {
+    if (!deductionBreakdown || !deductionBreakdown.breakdown) {
+      toast.error("No deduction breakdown data available to print.");
+      return;
+    }
+
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      toast.error("Pop-up blocked! Please allow pop-ups for printing.");
+      return;
+    }
+
+    const rowsHtml = deductionBreakdown.breakdown.map((row, idx) => `
+      <tr>
+        <td style="border: 1px solid black; padding: 6px; text-align: center;">${idx + 1}</td>
+        <td style="border: 1px solid black; padding: 6px;">${fmtDate(row.entry_date)}</td>
+        <td style="border: 1px solid black; padding: 6px; font-weight: bold;">${row.shop_no} - ${row.shop_name}</td>
+        <td style="border: 1px solid black; padding: 6px; text-align: right;">₹${Number(row.original_amount).toFixed(2)}</td>
+        <td style="border: 1px solid black; padding: 6px; text-align: right; color: #047857; font-weight: bold;">₹${Number(row.opening_deducted).toFixed(2)}</td>
+        <td style="border: 1px solid black; padding: 6px; text-align: right; font-weight: bold;">₹${Number(row.net_payable).toFixed(2)}</td>
+        <td style="border: 1px solid black; padding: 6px; text-align: right; font-family: monospace;">₹${Number(row.remaining_opening_pool).toFixed(2)}</td>
+      </tr>
+    `).join("");
+
+    const printContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <title>Opening Balance Deduction Audit Report</title>
+          <style>
+            body { font-family: sans-serif; padding: 20px; color: #000; }
+            h1 { text-align: center; font-size: 18px; text-transform: uppercase; margin-bottom: 4px; }
+            p { text-align: center; font-size: 12px; color: #333; margin: 2px 0 15px 0; }
+            table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
+            th { background: #f3f4f6; border: 1px solid black; padding: 6px; text-align: left; text-transform: uppercase; font-size: 10px; }
+            .summary { border: 2px solid black; padding: 12px; margin-top: 20px; background: #f9fafb; font-size: 12px; border-radius: 6px; }
+            .summary-row { display: flex; justify-content: space-between; padding: 4px 0; }
+          </style>
+        </head>
+        <body>
+          <h1>Auro Products Billing Suite</h1>
+          <p>Opening Balance Sequential FIFO Deduction Audit Report</p>
+          <p style="font-weight: bold; color: #1e40af;">Opening Balance Base: ₹${Number(deductionBreakdown.initial_opening_balance).toLocaleString("en-IN")}</p>
+          
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Date</th>
+                <th>Shop Details</th>
+                <th style="text-align: right;">Entry Total (₹)</th>
+                <th style="text-align: right;">Opening Deducted (₹)</th>
+                <th style="text-align: right;">Net Payable (₹)</th>
+                <th style="text-align: right;">Remaining Pool (₹)</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rowsHtml}
+            </tbody>
+          </table>
+
+          <div class="summary">
+            <h3 style="margin-top: 0; text-transform: uppercase; font-size: 13px; border-bottom: 1px solid #ccc; padding-bottom: 4px;">Audit Summary</h3>
+            <div class="summary-row"><span>Initial Opening Balance:</span><strong>₹${Number(deductionBreakdown.initial_opening_balance).toFixed(2)}</strong></div>
+            <div class="summary-row" style="color: #047857; border-top: 1px solid #e5e7eb;"><span>Total Opening Balance Deducted:</span><strong>₹${Number(deductionBreakdown.total_deducted).toFixed(2)}</strong></div>
+            <div class="summary-row" style="font-weight: bold; font-size: 13px; border-top: 2px solid black; margin-top: 4px; padding-top: 4px;"><span>Remaining Opening Balance Pool:</span><span>₹${Number(deductionBreakdown.remaining_opening_balance).toFixed(2)}</span></div>
+          </div>
+        </body>
+      </html>
+    `;
+
+    printWindow.document.open();
+    printWindow.document.write(printContent);
+    printWindow.document.close();
+
+    printWindow.onload = () => {
+      printWindow.focus();
+      printWindow.print();
+    };
+
+    // Fallback trigger if onload fired before assignment
+    setTimeout(() => {
+      printWindow.focus();
+      printWindow.print();
+    }, 500);
+  };
+  const deleteEntryItem = async (entryId) => {
+    if (!window.confirm("Are you sure you want to delete this entry?")) return;
+    try {
+      await api.delete(`/entries/${entryId}`);
+      toast.success("Entry deleted successfully");
+      load();
+    } catch (err) {
+      toast.error("Failed to delete entry");
     }
   };
 
@@ -333,7 +447,9 @@ export default function Shops() {
             className="flex items-center gap-2 rounded-xl border border-cyan-500/30 bg-cyan-500/10 px-4 py-2 text-sm text-cyan-300 hover:bg-cyan-500/20 transition"
           >
             <IndianRupee className="h-4 w-4" /> Opening Balance{" "}
-            {globalOpening !== "" && `(${inr(globalOpening)})`}
+            {deductionBreakdown?.remaining_opening_balance !== undefined
+              ? `(${inr(deductionBreakdown.remaining_opening_balance)})`
+              : globalOpening !== "" && `(${inr(globalOpening)})`}
           </button>
         )}
 
@@ -524,10 +640,11 @@ export default function Shops() {
                   <td className="p-4 text-slate-400">{s.contact || "—"}</td>
                   <td className="p-4 text-center">
                     <span
-                      className={`rounded-full px-2.5 py-1 text-xs font-medium ${s.cycle_days === 2
-                        ? "bg-amber-500/15 text-amber-300"
-                        : "bg-cyan-500/15 text-cyan-300"
-                        }`}
+                      className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                        s.cycle_days === 2
+                          ? "bg-amber-500/15 text-amber-300"
+                          : "bg-cyan-500/15 text-cyan-300"
+                      }`}
                     >
                       {s.cycle_days}d
                     </span>
@@ -612,7 +729,9 @@ export default function Shops() {
                 <div
                   key={k}
                   className={
-                    k === "location" || k === "name" || k === "gst_number" ? "sm:col-span-2" : ""
+                    k === "location" || k === "name" || k === "gst_number"
+                      ? "sm:col-span-2"
+                      : ""
                   }
                 >
                   <label className="text-xs text-slate-600 font-medium">
@@ -679,53 +798,35 @@ export default function Shops() {
           />
           <form
             onSubmit={saveGlobalOpening}
-            className="glass relative z-10 w-full max-w-lg rounded-2xl p-6 max-h-[90vh] overflow-y-auto"
+            className="glass relative z-10 w-full max-w-2xl rounded-2xl p-6 max-h-[90vh] overflow-y-auto"
           >
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-display text-lg font-semibold flex items-center gap-2 text-white">
-                <History className="h-5 w-5 text-cyan-400" /> Manage Opening
-                Balance
+                <History className="h-5 w-5 text-cyan-400" /> Manage Opening Balance
               </h3>
               <button type="button" onClick={() => setOpeningModal(false)}>
                 <X className="h-5 w-5 text-slate-400 hover:text-white" />
               </button>
             </div>
 
-            <p className="text-xs text-slate-400 mb-4">
-              Update universal opening balance, accumulate or overwrite, and track
-              entry metadata logs.
-            </p>
+            <div className="p-3 bg-cyan-500/10 border border-cyan-500/30 rounded-xl text-cyan-300 text-xs mb-4 flex justify-between items-center">
+              <div>
+                <span className="font-bold">Dynamic FIFO Deduction Audit</span>
+                <p className="text-[11px] text-slate-400 mt-0.5">Deducted sequentially per entry based on user opening balance amount.</p>
+              </div>
+              <button
+                type="button"
+                onClick={triggerA4Print}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-500 text-slate-900 font-bold rounded-lg hover:bg-cyan-400 transition text-xs shadow-md"
+              >
+                <Printer className="h-3.5 w-3.5" /> Print A4 Deduction Audit
+              </button>
+            </div>
 
             <div className="space-y-4">
-              <div>
-                <label className="text-xs text-slate-400">Update Mode</label>
-                <div className="grid grid-cols-2 gap-2 mt-1">
-                  <button
-                    type="button"
-                    onClick={() => setMode("add")}
-                    className={`py-2 px-3 text-xs rounded-lg border transition ${mode === "add"
-                      ? "bg-cyan-500/20 border-cyan-500 text-cyan-300 font-medium"
-                      : "bg-white/5 border-white/10 text-slate-400"
-                      }`}
-                  >
-                    Add (+) to Existing
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMode("replace")}
-                    className={`py-2 px-3 text-xs rounded-lg border transition ${mode === "replace"
-                      ? "bg-cyan-500/20 border-cyan-500 text-cyan-300 font-medium"
-                      : "bg-white/5 border-white/10 text-slate-400"
-                      }`}
-                  >
-                    Overwrite / Set Exact
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
-                  <label className="text-xs text-slate-400">Amount (₹)</label>
+                  <label className="text-xs text-slate-400">Opening Balance Amount (₹)</label>
                   <input
                     data-testid="global-opening-input"
                     type="number"
@@ -734,8 +835,19 @@ export default function Shops() {
                     value={globalOpening}
                     onChange={(e) => setGlobalOpening(e.target.value)}
                     placeholder="Enter amount..."
-                    className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm text-cyan-400 outline-none focus:border-cyan-500/50"
+                    className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm text-cyan-400 font-mono outline-none focus:border-cyan-500/50"
                   />
+                </div>
+                <div>
+                  <label className="text-xs text-slate-400">Entry Mode</label>
+                  <select
+                    value={mode}
+                    onChange={(e) => setMode(e.target.value)}
+                    className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm text-cyan-400 outline-none focus:border-cyan-500/50 [color-scheme:dark]"
+                  >
+                    <option value="replace" className="bg-slate-900 text-slate-200">Reset & Replace</option>
+                    <option value="add" className="bg-slate-900 text-slate-200">Add to Existing</option>
+                  </select>
                 </div>
                 <div>
                   <label className="text-xs text-slate-400 flex items-center gap-1">
@@ -751,168 +863,88 @@ export default function Shops() {
                 </div>
               </div>
 
-              <div>
-                <label className="text-xs text-slate-400 flex items-center gap-1">
-                  <User className="h-3.5 w-3.5" /> Entered By
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g. Accountant Name / Admin"
-                  value={enteredBy}
-                  onChange={(e) => setEnteredBy(e.target.value)}
-                  className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 py-2.5 px-3 text-sm text-black outline-none focus:border-cyan-500/50"
-                />
-              </div>
-
-              {openingHistory.length > 0 && (
+              {openingHistory && openingHistory.length > 0 && (
                 <div className="mt-4 pt-3 border-t border-white/10">
-                  <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 mb-2">
-                    <label className="text-xs font-mono uppercase tracking-wider text-slate-300">
-                      History Logs & Filter
-                    </label>
-
-                    <div className="flex flex-wrap items-center gap-1.5 w-full sm:w-auto">
-                      <div className="flex items-center gap-1 rounded bg-white/10 border border-white/20 px-2 py-1 text-xs text-white">
-                        <span className="text-[10px] font-mono font-bold text-slate-300 uppercase">From</span>
-                        <input
-                          type="date"
-                          value={historyFromDate || ""}
-                          max={historyToDate || undefined}
-                          onChange={(e) => {
-                            setHistoryFromDate(e.target.value);
-                            setHistoryPage(1);
-                          }}
-                          className="w-full bg-white text-xs text-slate-900 placeholder:text-slate-900 outline-none rounded-lg px-2 py-1 font-medium [color-scheme:light]"
-                        />
-                      </div>
-
-                      <div className="flex items-center gap-1 rounded bg-white/10 border border-white/20 px-2 py-1 text-xs text-white">
-                        <span className="text-[10px] font-mono font-bold text-slate-300 uppercase">To</span>
-                        <input
-                          type="date"
-                          value={historyToDate || ""}
-                          min={historyFromDate || undefined}
-                          onChange={(e) => {
-                            setHistoryToDate(e.target.value);
-                            setHistoryPage(1);
-                          }}
-                          className="w-full bg-white text-xs text-slate-900 placeholder:text-slate-900 outline-none rounded-lg px-2 py-1 font-medium [color-scheme:light]"
-                        />
-                      </div>
-
-                      {(historyFromDate || historyToDate) && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setHistoryFromDate("");
-                            setHistoryToDate("");
-                            setHistoryPage(1);
-                          }}
-                          className="text-xs text-red-300 hover:underline px-1"
-                        >
-                          Clear
-                        </button>
-                      )}
-                    </div>
+                  <label className="text-xs font-mono uppercase tracking-wider text-slate-300 mb-2 block flex justify-between items-center">
+                    <span>Opening Balance Entry History (Audit Logs)</span>
+                    <span className="text-[10px] text-amber-400">Deleting log recalculates balance</span>
+                  </label>
+                  <div className="max-h-36 overflow-y-auto rounded-lg border border-white/10 bg-black/40 text-xs">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-white/10 text-[10px] uppercase text-slate-400 font-mono">
+                          <th className="p-2">Date</th>
+                          <th className="p-2">Mode</th>
+                          <th className="p-2 text-right">Amount</th>
+                          <th className="p-2 text-right">Total After</th>
+                          <th className="p-2 text-center">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5 font-mono">
+                        {openingHistory.map((h) => (
+                          <tr key={h.id} className="hover:bg-white/5">
+                            <td className="p-2 text-slate-400">{fmtDate(h.entry_date)}</td>
+                            <td className="p-2 text-cyan-300 capitalize">{h.mode}</td>
+                            <td className="p-2 text-right text-emerald-400">₹{Number(h.amount).toFixed(2)}</td>
+                            <td className="p-2 text-right text-slate-300">₹{Number(h.total_after).toFixed(2)}</td>
+                            <td className="p-2 text-center">
+                              <button
+                                type="button"
+                                onClick={() => deleteOpeningHistoryLog(h.id)}
+                                title="Delete History Log"
+                                className="p-1 hover:bg-red-500/20 text-red-400 rounded transition"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
+                </div>
+              )}
 
-                  <div className="space-y-2 rounded-lg bg-white p-3 border border-slate-200 text-xs text-slate-900 shadow-sm">
-                    {(() => {
-                      const filteredHistory = openingHistory.filter((h) => {
-                        const rawDate = h.entry_date || (h.timestamp ? h.timestamp.slice(0, 10) : null);
-                        const logDateStr = rawDate ? String(rawDate).slice(0, 10) : null;
-
-                        let matchesDate = true;
-                        if (logDateStr) {
-                          if (historyFromDate && logDateStr < historyFromDate) matchesDate = false;
-                          if (historyToDate && logDateStr > historyToDate) matchesDate = false;
-                        }
-
-                        return matchesDate;
-                      });
-
-                      const currentFilteredPageCount = Math.max(
-                        1,
-                        Math.ceil(filteredHistory.length / HISTORY_PAGE_SIZE)
-                      );
-                      const displayedHistory = filteredHistory.slice(
-                        (historyPage - 1) * HISTORY_PAGE_SIZE,
-                        historyPage * HISTORY_PAGE_SIZE
-                      );
-
-                      if (displayedHistory.length === 0) {
-                        return (
-                          <div className="text-center py-3 text-slate-500">
-                            No history records found for the selected date range.
-                          </div>
-                        );
-                      }
-
-                      return (
-                        <>
-                          {displayedHistory.map((h, idx) => (
-                            <div
-                              key={idx}
-                              className="py-2 border-b border-slate-100 last:border-b-0 flex justify-between items-center"
-                            >
-                              <div>
-                                <div className="flex items-center gap-2 text-slate-800">
-                                  <span className="font-medium text-cyan-700">
-                                    {h.entry_date ||
-                                      new Date(
-                                        h.timestamp || Date.now()
-                                      ).toLocaleDateString()}
-                                  </span>
-                                  <span className="text-[10px] bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded text-slate-700">
-                                    By: {h.entered_by || "Admin"}
-                                  </span>
-                                </div>
-                                <span className="text-[10px] text-slate-500 block mt-0.5">
-                                  Mode:{" "}
-                                  <span className="uppercase text-amber-600 font-semibold">
-                                    {h.mode}
-                                  </span>{" "}
-                                  (Amt: ₹{h.amount})
-                                </span>
-                              </div>
-                              <span className="font-mono font-semibold text-emerald-600 text-sm">
-                                ₹{h.total_after}
-                              </span>
-                            </div>
-                          ))}
-
-                          {filteredHistory.length > HISTORY_PAGE_SIZE && (
-                            <div className="pt-3 mt-1 border-t border-slate-200 flex justify-between items-center text-[11px] text-slate-600">
-                              <span>
-                                Page {historyPage} of {currentFilteredPageCount}
-                              </span>
-                              <div className="flex gap-1">
-                                <button
-                                  type="button"
-                                  disabled={historyPage === 1}
-                                  onClick={() =>
-                                    setHistoryPage((p) => Math.max(1, p - 1))
-                                  }
-                                  className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 border border-slate-200 disabled:opacity-30 transition text-slate-700"
-                                >
-                                  Prev
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={
-                                    historyPage >= currentFilteredPageCount
-                                  }
-                                  onClick={() => setHistoryPage((p) => p + 1)}
-                                  className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 border border-slate-200 disabled:opacity-30 transition text-slate-700"
-                                >
-                                  Next
-                                </button>
-                              </div>
-                            </div>
-                          )}
-                        </>
-                      );
-                    })()}
+              {deductionBreakdown && (
+                <div className="mt-4 pt-3 border-t border-white/10">
+                  <label className="text-xs font-mono uppercase tracking-wider text-slate-300 mb-2 block flex justify-between items-center">
+                    <span>Sequential FIFO Entry Deductions (Traceability)</span>
+                    <span className="text-[10px] text-cyan-400">Click Trash to Delete Entry</span>
+                  </label>
+                  <div className="max-h-40 overflow-y-auto rounded-lg border border-white/10 bg-black/40 text-xs">
+                    <table className="w-full text-left">
+                      <thead>
+                        <tr className="border-b border-white/10 text-[10px] uppercase text-slate-400 font-mono">
+                          <th className="p-2">Date</th>
+                          <th className="p-2">Shop</th>
+                          <th className="p-2 text-right">Entry Amt</th>
+                          <th className="p-2 text-right text-emerald-400">Deducted</th>
+                          <th className="p-2 text-right">Net Amt</th>
+                          <th className="p-2 text-center">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5 font-mono">
+                        {deductionBreakdown.breakdown.map((b) => (
+                          <tr key={b.entry_id} className="hover:bg-white/5">
+                            <td className="p-2 text-slate-400">{fmtDate(b.entry_date)}</td>
+                            <td className="p-2 text-cyan-300">{b.shop_no}</td>
+                            <td className="p-2 text-right">₹{b.original_amount.toFixed(2)}</td>
+                            <td className="p-2 text-right text-emerald-400">₹{b.opening_deducted.toFixed(2)}</td>
+                            <td className="p-2 text-right text-slate-300">₹{b.net_payable.toFixed(2)}</td>
+                            <td className="p-2 text-center">
+                              <button
+                                type="button"
+                                onClick={() => deleteEntryItem(b.entry_id)}
+                                title="Delete Entry"
+                                className="p-1 hover:bg-red-500/20 text-red-400 rounded transition"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
               )}
