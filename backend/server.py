@@ -784,63 +784,73 @@ def get_single_invoice(invoice_id: int, db: Session = Depends(get_db)):
 @app.post("/api/invoices")
 @app.post("/invoices")
 def create_invoice(payload: InvoiceCreate, db: Session = Depends(get_db)):
-    if payload.invoice_date:
-        try:
-            inv_dt = datetime.datetime.fromisoformat(payload.invoice_date.replace("Z", "+00:00"))
-        except Exception:
+    try:
+        if payload.invoice_date:
+            try:
+                inv_dt = datetime.datetime.fromisoformat(payload.invoice_date.replace("Z", "+00:00"))
+            except Exception:
+                inv_dt = datetime.datetime.utcnow()
+        else:
             inv_dt = datetime.datetime.utcnow()
-    else:
-        inv_dt = datetime.datetime.utcnow()
 
-    inv_no = payload.invoice_no
-    if inv_no:
-        existing = db.query(InvoiceModel).filter(InvoiceModel.invoice_no == inv_no).first()
-        if existing:
-            raise HTTPException(status_code=400, detail=f"Invoice number '{inv_no}' already exists!")
+        inv_no = payload.invoice_no
+        if inv_no:
+            existing = db.query(InvoiceModel).filter(InvoiceModel.invoice_no == inv_no).first()
+            if existing:
+                raise HTTPException(status_code=400, detail=f"Invoice number '{inv_no}' already exists!")
 
-    if not inv_no:
-        last_inv = db.query(InvoiceModel).order_by(InvoiceModel.id.desc()).first()
-        next_num = 1
-        if last_inv and last_inv.invoice_no:
-            parts = last_inv.invoice_no.split("-")
-            if parts[-1].strip().isdigit():
-                next_num = int(parts[-1].strip()) + 1
-        inv_no = f"AP-INV-{next_num:05d}"
+        if not inv_no:
+            last_inv = db.query(InvoiceModel).order_by(InvoiceModel.id.desc()).first()
+            next_num = 1
+            if last_inv and last_inv.invoice_no:
+                try:
+                    parts = last_inv.invoice_no.split("-")
+                    if parts[-1].strip().isdigit():
+                        next_num = int(parts[-1].strip()) + 1
+                except Exception:
+                    next_num = db.query(InvoiceModel).count() + 1
+            inv_no = f"AP-INV-{next_num:05d}"
 
-    new_inv = InvoiceModel(
-        invoice_no=inv_no,
-        shop_id=payload.shop_id,
-        party_name=payload.party_name or payload.customer_name or "Party",
-        customer_name=payload.customer_name or payload.party_name or "Party",
-        mobile=payload.contact or payload.mobile,
-        address=payload.location or payload.address,
-        supervisor=payload.supervisor,
-        gst_number=payload.gst_number,
-        invoice_date=inv_dt,
-        invoice_type=payload.invoice_type or "SALES",
-        waste_kg=payload.waste_kg or 0.0,
-        taxable_amount=payload.taxable_amount or 0.0,
-        total_amount=payload.total_amount or 0.0,
-        amount_paid=payload.amount_paid or 0.0,
-        status="unpaid"
-    )
-
-    db.add(new_inv)
-    db.commit()
-    db.refresh(new_inv)
-
-    for item in payload.items:
-        new_item = InvoiceItemModel(
-            invoice_id=new_inv.id,
-            description=item.description,
-            quantity=item.quantity,
-            rate=item.rate,
-            amount=item.amount or (item.quantity * item.rate)
+        new_inv = InvoiceModel(
+            invoice_no=inv_no,
+            shop_id=payload.shop_id,
+            party_name=payload.party_name or payload.customer_name or "Party",
+            customer_name=payload.customer_name or payload.party_name or "Party",
+            mobile=payload.contact or payload.mobile,
+            address=payload.location or payload.address,
+            supervisor=payload.supervisor,
+            gst_number=payload.gst_number,
+            invoice_date=inv_dt,
+            invoice_type=payload.invoice_type or "SALES",
+            waste_kg=payload.waste_kg or 0.0,
+            taxable_amount=payload.taxable_amount or 0.0,
+            total_amount=payload.total_amount or 0.0,
+            amount_paid=payload.amount_paid or 0.0,
+            status="unpaid"
         )
-        db.add(new_item)
 
-    db.commit()
-    return {"message": "Invoice created successfully", "id": new_inv.id, "invoice_no": new_inv.invoice_no}
+        db.add(new_inv)
+        db.commit()
+        db.refresh(new_inv)
+
+        if payload.items:
+            for item in payload.items:
+                new_item = InvoiceItemModel(
+                    invoice_id=new_inv.id,
+                    description=item.description,
+                    quantity=item.quantity,
+                    rate=item.rate,
+                    amount=item.amount or (item.quantity * item.rate)
+                )
+                db.add(new_item)
+            db.commit()
+
+        return {"message": "Invoice created successfully", "id": new_inv.id, "invoice_no": new_inv.invoice_no}
+    except Exception as e:
+        db.rollback()
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @app.put("/api/invoices/{invoice_id}")
