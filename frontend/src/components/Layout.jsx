@@ -9,13 +9,13 @@ import {
 
 const NAV = [
   { name: "Dashboard", icon: LayoutDashboard, path: "/dashboard", tid: "nav-dashboard" },
-  { name: "149 Wine Shops", icon: Store, path: "/shops", tid: "nav-shops" },
-  { name: "Cotton Box Entry", icon: PackagePlus, path: "/box-entry", tid: "nav-box-entry" },
+  { name: "TasMac Wine Shops", icon: Store, path: "/shops", tid: "nav-shops" },
+  { name: "Purchase Entry", icon: PackagePlus, path: "/box-entry", tid: "nav-box-entry" },
   { name: "Inventory", icon: Boxes, path: "/inventory", tid: "nav-inventory" },
-  { name: "GST Invoices", icon: Receipt, path: "/invoices", tid: "nav-invoices" },
+  { name: "Sales Entry", icon: Receipt, path: "/invoices", tid: "nav-invoices" },
   { name: "Payments & Ledger", icon: Wallet, path: "/payments", tid: "nav-payments" },
   { name: "Expenses & Labour", icon: Wallet, path: "/expenses", tid: "nav-expenses" },
-  { name: "Collections", icon: Coins, path: "/collections", tid: "nav-collections" },
+  { name: "Profit & Loss", icon: Coins, path: "/collections", tid: "nav-collections" },
   { name: "Reports", icon: FileBarChart, path: "/reports", tid: "nav-reports" },
   { name: "Waste Analytics", icon: Scale, path: "/waste-analytics", tid: "nav-waste" },
   { name: "Calendar", icon: Calendar, path: "/calendar", tid: "nav-calendar" },

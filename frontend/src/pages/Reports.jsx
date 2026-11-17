@@ -219,13 +219,49 @@ export default function Reports() {
     setModalOpen(true);
   };
 
-  const handlePrintModal = () => {
-    window.print();
+  const handlePrintModal = (e) => {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    const printableContent = document.getElementById("printable-statement-area");
+    if (!printableContent) return;
+
+    const printWindow = window.open("", "_blank", "width=1000,height=800");
+    if (printWindow) {
+      printWindow.document.write(`
+        <html>
+          <head>
+            <title>${modalTitle}</title>
+            <style>
+              body { font-family: sans-serif; padding: 20px; color: #1e293b; }
+              table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 11px; }
+              th, td { border: 1px solid #cbd5e1; padding: 8px; text-align: left; }
+              th { background-color: #f1f5f9; font-weight: bold; }
+              .text-right { text-align: right; }
+              .font-bold { font-weight: bold; }
+              .header { display: flex; justify-content: space-between; border-bottom: 2px solid #0f172a; padding-bottom: 10px; margin-bottom: 15px; }
+              @page { size: A4 landscape; margin: 10mm; }
+            </style>
+          </head>
+          <body>
+            ${printableContent.innerHTML}
+            <script>
+              window.onload = function() {
+                window.print();
+                window.close();
+              };
+            </script>
+          </body>
+        </html>
+      `);
+      printWindow.document.close();
+    }
   };
 
   return (
     <div className="p-6 min-h-screen bg-slate-50 text-slate-800">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6 print:hidden">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-2xl bg-cyan-100 text-cyan-700">
@@ -265,7 +301,7 @@ export default function Reports() {
       </div>
 
       {/* Interactive Stock Cards Section with Beer & Brandy Breakdown */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6 print:hidden">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <div 
           onClick={() => openCardModal("total_purchase", "Total Purchased Beer & Brandy Boxes Statement")}
           className="p-5 rounded-2xl bg-indigo-50 border border-indigo-100 shadow-sm flex items-center justify-between cursor-pointer hover:border-indigo-300 hover:shadow-md transition group"
@@ -334,7 +370,7 @@ export default function Reports() {
       </div>
 
       {/* Financial & GST Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 print:hidden">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div 
           onClick={() => openCardModal("purchase_invoice_total", "Purchase Entry Invoice Statement")}
           className="p-5 rounded-2xl bg-blue-50 border border-blue-100 shadow-sm flex items-center justify-between cursor-pointer hover:border-blue-300 hover:shadow-md transition group"
@@ -405,7 +441,7 @@ export default function Reports() {
       </div>
 
       {/* Entry Records Table */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden print:hidden">
+      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex items-center justify-between">
           <h3 className="font-bold text-slate-800 text-sm">
             Beer & Brandy Box Entries
@@ -487,25 +523,26 @@ export default function Reports() {
 
       {/* DETAIL MODAL WITH PRINT SUPPORT */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm overflow-y-auto print:p-0 print:bg-white print:static">
-          <div className="relative w-full max-w-6xl bg-white text-slate-900 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] print:max-h-none print:shadow-none print:w-full print:rounded-none">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-6xl bg-white text-slate-900 rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
             
-            <div className="flex justify-between items-center px-6 py-4 border-b border-slate-200 bg-slate-50 print:hidden">
+            <div className="flex justify-between items-center px-6 py-4 border-b border-slate-200 bg-slate-50">
               <h3 className="font-bold text-slate-900 text-lg">{modalTitle}</h3>
               <div className="flex items-center gap-3">
                 <button
+                  type="button"
                   onClick={handlePrintModal}
-                  className="flex items-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-xl text-xs font-bold hover:bg-cyan-700 transition"
+                  className="flex items-center gap-2 px-4 py-2 bg-cyan-600 text-white rounded-xl text-xs font-bold hover:bg-cyan-700 transition cursor-pointer"
                 >
-                  <Printer className="h-4 w-4" /> Print A2 Detailed Statement
+                  <Printer className="h-4 w-4" /> Print A4 Detailed Statement
                 </button>
-                <button onClick={() => setModalOpen(false)} className="p-1.5 text-slate-400 hover:text-slate-700">
+                <button type="button" onClick={() => setModalOpen(false)} className="p-1.5 text-slate-400 hover:text-slate-700 cursor-pointer">
                   <X className="h-5 w-5" />
                 </button>
               </div>
             </div>
 
-            <div className="p-6 overflow-y-auto space-y-4 print:p-2 print:overflow-visible">
+            <div id="printable-statement-area" className="p-6 overflow-y-auto space-y-4">
               <div className="border-b-2 border-slate-900 pb-4 mb-4 flex justify-between items-center">
                 <div>
                   <h1 className="text-2xl font-black uppercase text-slate-900">AURO PRODUCTS</h1>
@@ -736,29 +773,6 @@ export default function Reports() {
           </div>
         </div>
       )}
-
-      <style>{`
-        @media print {
-          body * {
-            visibility: hidden;
-          }
-          .fixed, .fixed * {
-            visibility: visible;
-          }
-          .fixed {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 100% !important;
-            height: auto !important;
-            background: white !important;
-          }
-          @page {
-            size: A2 landscape;
-            margin: 10mm;
-          }
-        }
-      `}</style>
     </div>
   );
 }
