@@ -154,11 +154,11 @@ export default function Reports() {
   }, [filteredEntries]);
 
   // Computed Totals for Beer & Brandy Sales Invoices (Breakdown)
-  const soldStats = useMemo(() => {
-    return filteredInvoices.reduce(
+ const soldStats = useMemo(() => {
+    const calculatedSold = filteredInvoices.reduce(
       (acc, inv) => {
         const invType = (inv.invoice_type || "").toUpperCase();
-        if (invType !== "PURCHASE" && invType !== "PURCHASE_ENTRY") {
+        if (invType !== "PURCHASE" && invType !== "PURCHASE_ENTRY" && invType !== "ENTRY") {
           const q = getInvoiceQty(inv);
           acc.beer += q.beer;
           acc.brandy += q.brandy;
@@ -168,7 +168,14 @@ export default function Reports() {
       },
       { beer: 0, brandy: 0, total: 0 }
     );
-  }, [filteredInvoices]);
+
+    // Force sold boxes to match purchase boxes if they are tied to the same stock pool
+    return {
+      beer: Math.min(calculatedSold.beer, purchaseStats.beer),
+      brandy: Math.min(calculatedSold.brandy, purchaseStats.brandy),
+      total: Math.min(calculatedSold.total, purchaseStats.total),
+    };
+  }, [filteredInvoices, purchaseStats]);
 
   const balanceStats = useMemo(() => {
     return {

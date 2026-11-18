@@ -332,10 +332,7 @@ def get_opening_balance(db: Session = Depends(get_db)):
 @app.get("/dashboard")
 def get_dashboard(db: Session = Depends(get_db)):
     total_shops = db.query(func.count(ShopModel.id)).scalar() or 0
-    
-    # டேட்டாபேஸில் உள்ள என்ட்ரிக்களின் மொத்த பாக்ஸ்களை மட்டும் நேరుாக எடுக்கவும் (மேனுவல் 127320 தேவையில்லை)
     total_boxes = db.query(func.coalesce(func.sum(EntryModel.quantity), 0)).scalar() or 0
-    
     total_waste = db.query(func.coalesce(func.sum(EntryModel.waste_kg), 0.0)).scalar() or 0.0
     total_revenue = db.query(func.coalesce(func.sum(InvoiceModel.total_amount), 0.0)).filter(InvoiceModel.invoice_type == "SALES").scalar() or 0.0
 
@@ -484,20 +481,15 @@ def delete_opening_balance_history(log_id: int, db: Session = Depends(get_db)):
         except Exception:
             history = []
             
-    # Filter out the history log matching the log_id
     history = [h for h in history if h.get("id") != log_id]
-    
-    # Recalculate total opening balance from the remaining history logs
     recalculated_total = sum([float(h.get("amount", 0)) for h in history]) if history else 0.0
     
-    # Update current opening balance setting
     if not setting:
         setting = SettingModel(key="opening_balance", value=str(recalculated_total))
         db.add(setting)
     else:
         setting.value = str(recalculated_total)
         
-    # Update history setting
     if not history_setting:
         history_setting = SettingModel(key="opening_balance_history", value=json.dumps(history))
         db.add(history_setting)
@@ -911,7 +903,6 @@ def delete_invoice(invoice_id: int, db: Session = Depends(get_db)):
 
 
 # --- PAYMENT ENDPOINTS ---
-# --- PAYMENT ENDPOINTS ---
 
 @app.get("/api/payments")
 @app.get("/payments")
@@ -961,7 +952,6 @@ def create_payment(payload: PaymentCreate, db: Session = Depends(get_db)):
     )
     db.add(new_payment)
 
-    # 1. Update Invoice amount paid if invoice_id is present
     if payload.invoice_id:
         inv = db.query(InvoiceModel).filter(InvoiceModel.id == payload.invoice_id).first()
         if inv:
@@ -971,7 +961,6 @@ def create_payment(payload: PaymentCreate, db: Session = Depends(get_db)):
             elif inv.amount_paid > 0:
                 inv.status = "partial"
 
-    # 2. Add payment amount to Opening Balance pool (as requested)
     setting = db.query(SettingModel).filter(SettingModel.key == "opening_balance").first()
     current_ob = float(setting.value) if setting and setting.value else 0.0
     new_ob = current_ob + float(payload.amount)
@@ -982,7 +971,6 @@ def create_payment(payload: PaymentCreate, db: Session = Depends(get_db)):
     else:
         setting.value = str(new_ob)
 
-    # Optional: Log this addition in opening_balance_history
     history_setting = db.query(SettingModel).filter(SettingModel.key == "opening_balance_history").first()
     history = []
     if history_setting and history_setting.value:
@@ -1031,6 +1019,7 @@ def delete_payment(payment_id: int, db: Session = Depends(get_db)):
     db.delete(payment)
     db.commit()
     return {"message": "Payment deleted successfully"}
+
 
 # --- COLLECTIONS / LEDGER ENDPOINT ---
 
@@ -1102,17 +1091,24 @@ def get_collections(db: Session = Depends(get_db)):
 
 
 # --- REPORTS ENDPOINTS & ALL-UNSOLD ENDPOINT ---
-
-def calculate_stock_and_statuses(db: Session):
+def calculate_stock_and_statuses(db: Session, start_dt=None, end_dt=None):
     try:
-        all_historical_entries = db.query(EntryModel).options(joinedload(EntryModel.shop)).order_by(EntryModel.entry_date.asc(), EntryModel.id.asc()).all()
-        all_invoices_sorted = db.query(InvoiceModel).options(joinedload(InvoiceModel.items), joinedload(InvoiceModel.shop)).order_by(InvoiceModel.invoice_date.asc(), InvoiceModel.id.asc()).all()
-        all_entries_cumulative = db.query(EntryModel).all()
-        all_invoices_cumulative = db.query(InvoiceModel).options(joinedload(InvoiceModel.items)).all()
+        # Base queries with optional date filtering
+        entry_query = db.query(EntryModel).options(joinedload(EntryModel.shop))
+        invoice_query = db.query(InvoiceModel).options(joinedload(InvoiceModel.items), joinedload(InvoiceModel.shop))
+        
+        if start_dt and end_dt:
+            entry_query = entry_query.filter(EntryModel.entry_date >= start_dt, EntryModel.entry_date < end_dt)
+            invoice_query = invoice_query.filter(InvoiceModel.invoice_date >= start_dt, InvoiceModel.invoice_date < end_dt)
+
+        all_historical_entries = entry_query.order_by(EntryModel.entry_date.asc(), EntryModel.id.asc()).all()
+        all_invoices_sorted = invoice_query.order_by(InvoiceModel.invoice_date.asc(), InvoiceModel.id.asc()).all()
+        
+        all_entries_cumulative = entry_query.all()
+        all_invoices_cumulative = invoice_query.all()
 
         total_entries_qty = sum([float(e.quantity or 0) for e in all_entries_cumulative])
-        base_stock = 127320.0
-        total_stock_qty = base_stock + total_entries_qty
+        total_stock_qty = total_entries_qty  # Real purchase boxes for the period
         
         raw_sold_beer = 0.0
         raw_sold_brandy = 0.0
@@ -1133,12 +1129,6 @@ def calculate_stock_and_statuses(db: Session):
         raw_sold_stock = raw_sold_beer + raw_sold_brandy
         sold_stock_qty = min(raw_sold_stock, total_stock_qty)
         balance_stock_qty = max(0.0, total_stock_qty - sold_stock_qty)
-
-        base_beer = base_stock / 2.0
-        base_brandy = base_stock / 2.0
-
-        surplus_beer_to_allocate = max(0.0, raw_sold_beer - base_beer)
-        surplus_brandy_to_allocate = max(0.0, raw_sold_brandy - base_brandy)
 
         entry_allocations = {}
         for e in all_historical_entries:
@@ -1173,23 +1163,16 @@ def calculate_stock_and_statuses(db: Session):
             if inv_ptr >= len(invoice_queue):
                 break
 
-            if surplus_beer_to_allocate > 0 and alloc["beer_remaining"] > 0:
-                take_beer = min(alloc["beer_remaining"], surplus_beer_to_allocate)
-                alloc["beer_remaining"] -= take_beer
-                surplus_beer_to_allocate -= take_beer
-
-            if surplus_brandy_to_allocate > 0 and alloc["brandy_remaining"] > 0:
-                take_brandy = min(alloc["brandy_remaining"], surplus_brandy_to_allocate)
-                alloc["brandy_remaining"] -= take_brandy
-                surplus_brandy_to_allocate -= take_brandy
-
             consumed_total = (alloc["beer_total"] - alloc["beer_remaining"]) + (alloc["brandy_total"] - alloc["brandy_remaining"])
-            temp_take = consumed_total
+            temp_take = (alloc["beer_total"] + alloc["brandy_total"]) - consumed_total
+            
             while temp_take > 0 and inv_ptr < len(invoice_queue):
                 cur_inv = invoice_queue[inv_ptr]
                 consumed = min(temp_take, inv_rem)
                 if consumed > 0:
                     alloc["matched_invoices"].add(cur_inv["invoice_no"])
+                    alloc["beer_remaining"] = max(0.0, alloc["beer_remaining"] - (consumed / 2.0))
+                    alloc["brandy_remaining"] = max(0.0, alloc["brandy_remaining"] - (consumed / 2.0))
                     temp_take -= consumed
                     inv_rem -= consumed
                 if inv_rem <= 0:
@@ -1469,6 +1452,7 @@ def get_monthly_report(month: Optional[str] = None, all_time: Optional[bool] = F
         "records": records,
         "invoices": invoice_records
     }
+
 
 # --- WASTE ANALYTICS ENDPOINTS ---
 
