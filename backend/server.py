@@ -1093,22 +1093,19 @@ def get_collections(db: Session = Depends(get_db)):
 # --- REPORTS ENDPOINTS & ALL-UNSOLD ENDPOINT ---
 def calculate_stock_and_statuses(db: Session, start_dt=None, end_dt=None):
     try:
-        # Base queries with optional date filtering
-        entry_query = db.query(EntryModel).options(joinedload(EntryModel.shop))
+        # எப்போதும் அனைத்து பர்சேஸ் என்ட்ரிகளையும் கணக்கில் கொள்ள வேண்டும்
+        all_historical_entries = db.query(EntryModel).options(joinedload(EntryModel.shop)).order_by(EntryModel.entry_date.asc(), EntryModel.id.asc()).all()
+        all_entries_cumulative = all_historical_entries
+        
+        # இன்வாய்ஸ்கள் மட்டும் ஃபில்டர் செய்யப்பட்ட தேதியில் எடுக்கப்படலாம்
         invoice_query = db.query(InvoiceModel).options(joinedload(InvoiceModel.items), joinedload(InvoiceModel.shop))
-        
         if start_dt and end_dt:
-            entry_query = entry_query.filter(EntryModel.entry_date >= start_dt, EntryModel.entry_date < end_dt)
             invoice_query = invoice_query.filter(InvoiceModel.invoice_date >= start_dt, InvoiceModel.invoice_date < end_dt)
-
-        all_historical_entries = entry_query.order_by(EntryModel.entry_date.asc(), EntryModel.id.asc()).all()
         all_invoices_sorted = invoice_query.order_by(InvoiceModel.invoice_date.asc(), InvoiceModel.id.asc()).all()
-        
-        all_entries_cumulative = entry_query.all()
         all_invoices_cumulative = invoice_query.all()
 
         total_entries_qty = sum([float(e.quantity or 0) for e in all_entries_cumulative])
-        total_stock_qty = total_entries_qty  # Real purchase boxes for the period
+        total_stock_qty = total_entries_qty  # அனைத்து நாட்களுக்குமான மொத்த பர்சேஸ் ஸ்டாக்
         
         raw_sold_beer = 0.0
         raw_sold_brandy = 0.0
@@ -1126,9 +1123,10 @@ def calculate_stock_and_statuses(db: Session, start_dt=None, end_dt=None):
                             raw_sold_beer += qty / 2.0
                             raw_sold_brandy += qty / 2.0
 
-        raw_sold_stock = raw_sold_beer + raw_sold_brandy
-        sold_stock_qty = min(raw_sold_stock, total_stock_qty)
-        balance_stock_qty = max(0.0, total_stock_qty - sold_stock_qty)
+        sold_stock_qty = raw_sold_beer + raw_sold_brandy
+        balance_stock_qty = total_stock_qty - sold_stock_qty
+        
+        # (இதற்கு கீழுள்ள மற்ற கோடுகள் அப்படியே இருக்கட்டும்...)
 
         entry_allocations = {}
         for e in all_historical_entries:
@@ -1352,108 +1350,73 @@ def get_daily_report(day: Optional[str] = None, start_date: Optional[str] = None
         "invoices": invoice_records
     }
 
+@app.get("/api/reports/range")
+@app.get("/reports/range")
+def get_reports_range(fromDate: str, toDate: str, db: Session = Depends(get_db)):
+    try:
+        start_dt = datetime.datetime.fromisoformat(fromDate)
+        end_dt = datetime.datetime.fromisoformat(toDate) + datetime.timedelta(days=1)
+    except Exception:
+        start_dt = datetime.datetime.utcnow().date()
+        end_dt = start_dt + datetime.timedelta(days=1)
 
-@app.get("/api/reports/monthly")
-@app.get("/reports/monthly")
-def get_monthly_report(month: Optional[str] = None, all_time: Optional[bool] = False, db: Session = Depends(get_db)):
-    today = datetime.datetime.utcnow()
-    year, m = today.year, today.month
-    if month:
-        try:
-            parts = month.split("-")
-            year = int(parts[0])
-            m = int(parts[1])
-        except Exception:
-            pass
+    # 1. அனைத்து என்ட்ரிகள் (All-Time Entries for Total Stock)
+    all_entries = db.query(EntryModel).options(joinedload(EntryModel.shop)).all()
+    
+    # குறிப்பிட்ட தேதிக்குள்ளான என்ட்ரிகள் (Filtered Entries)
+    filtered_entries = [e for e in all_entries if e.entry_date and start_dt <= e.entry_date < end_dt]
 
-    start_dt = datetime.datetime(year, m, 1)
-    if m == 12:
-        end_dt = datetime.datetime(year + 1, 1, 1)
-    else:
-        end_dt = datetime.datetime(year, m + 1, 1)
-
+    # 2. குறிப்பிட்ட தேதிக்குள்ளான இன்வாய்ஸ்கள் மட்டும் (Filtered Invoices for Sold Stock)
     invoices = db.query(InvoiceModel).options(joinedload(InvoiceModel.items)).filter(
         InvoiceModel.invoice_date >= start_dt,
         InvoiceModel.invoice_date < end_dt
     ).all()
-    entries = db.query(EntryModel).options(joinedload(EntryModel.shop)).filter(
-        EntryModel.entry_date >= start_dt,
-        EntryModel.entry_date < end_dt
-    ).all()
 
-    stock_data = calculate_stock_and_statuses(db)
-    entry_status_map = stock_data["entry_status_map"]
-    entry_invoice_map = stock_data["entry_invoice_map"]
+    # Purchase Total & GST (தேதிக்குள் உள்ளவை)
+    purchase_invoice_total = sum([float(e.total_amount or 0.0) for e in filtered_entries])
+    
+    purchase_gst_total = 0.0
+    for e in filtered_entries:
+        cgst = float(e.cgst_amount or 0.0)
+        sgst = float(e.sgst_amount or 0.0)
+        gst = cgst + sgst
+        if gst == 0.0:
+            tot = float(e.total_amount or 0.0)
+            taxable = float(e.taxable_amount or (tot * 0.9))
+            gst = max(0.0, tot - taxable)
+        purchase_gst_total += gst
 
-    purchase_invoice_total = 0.0
-    sale_invoice_total = 0.0
-    gst_collected_sales = 0.0
-    gst_collected_purchase = 0.0
+    # Sale Total (தேதிக்குள் உள்ளவை)
+    sale_invoice_total = sum([float(inv.total_amount or 0.0) for inv in invoices if (inv.invoice_type or "").upper() not in ["PURCHASE", "PURCHASE_ENTRY"]])
 
-    for e in entries:
-        tot = e.total_amount or 0.0
-        taxable = e.taxable_amount or 0.0
-        gst = (e.cgst_amount or 0.0) + (e.sgst_amount or 0.0)
-        if gst == 0.0 and tot > taxable:
-            gst = tot - taxable
-        purchase_invoice_total += tot
-        gst_collected_purchase += gst
-
-    invoice_records = []
+    # 3. Stock Calculations
+    # Total Purchase Boxes (All-time or Filtered? பொதுவாக Total Purchase என்பது அனைத்துப் பொருட்களின் இருப்பு)
+    total_purchase_boxes = sum([float(e.quantity or 0) for e in all_entries])
+    
+    # Sold Boxes - இந்தத் தேதிக்குள் விற்றவை மட்டும்
+    total_sold_boxes = 0.0
     for inv in invoices:
-        tot = inv.total_amount or 0.0
-        taxable = inv.taxable_amount or 0.0
-        gst = tot - taxable
+        inv_type = (inv.invoice_type or "").upper()
+        if inv_type not in ["PURCHASE", "PURCHASE_ENTRY"]:
+            if inv.items:
+                for item in inv.items:
+                    desc = (item.description or "").lower()
+                    # வேஸ்ட் அல்லது வெயிட் சம்பந்தப்பட்ட ஐட்டம்களை விற்பனை ஸ்டாக்கில் சேர்க்க வேண்டாம்
+                    if "waste" in desc or "weight" in desc:
+                        continue
+                    total_sold_boxes += float(item.quantity or 0)
 
-        if inv.invoice_type and inv.invoice_type.upper() in ["PURCHASE", "PURCHASE_ENTRY"]:
-            purchase_invoice_total += tot
-            gst_collected_purchase += gst
-        else:
-            sale_invoice_total += tot
-            gst_collected_sales += gst
-
-        invoice_records.append({
-            "id": inv.id,
-            "invoice_no": inv.invoice_no,
-            "party_name": inv.party_name or inv.customer_name or "—",
-            "date": inv.invoice_date.isoformat() if inv.invoice_date else "",
-            "total_amount": tot,
-            "taxable_amount": taxable,
-            "gst_amount": gst,
-            "type": inv.invoice_type or "SALES",
-            "items": [{"description": it.description, "quantity": it.quantity, "rate": it.rate, "amount": it.amount} for it in inv.items]
-        })
-
-    records = []
-    for e in entries:
-        e_qty = float(e.quantity or 0)
-        records.append({
-            "id": e.id,
-            "date": e.entry_date.isoformat() if e.entry_date else "",
-            "shop_no": e.shop.shop_no if e.shop else "—",
-            "shop_name": e.shop.name if e.shop and e.shop.name else "—",
-            "box_type": e.box_type or "Cotton Box",
-            "quantity": e_qty,
-            "waste_kg": e.waste_kg or 0.0,
-            "total_amount": e.total_amount or 0.0,
-            "status": entry_status_map.get(e.id, "Unsold"),
-            "invoice_no": entry_invoice_map.get(e.id, "—")
-        })
+    # Balance Stock = Total Purchase - Sold Boxes (அல்லது அந்த தேதி வரையிலான இருப்பு)
+    balance_boxes = total_purchase_boxes - total_sold_boxes
 
     return {
-        "month": f"{year:04d}-{m:02d}",
+        "total_stock": total_purchase_boxes,
+        "sold_stock": total_sold_boxes,
+        "balance_stock": balance_boxes,
         "purchase_invoice_total": purchase_invoice_total,
         "sale_invoice_total": sale_invoice_total,
-        "gst_collected_sales": gst_collected_sales,
-        "gst_collected_purchase": gst_collected_purchase,
-        "total_stock": stock_data["total_stock"],
-        "sold_stock": stock_data["sold_stock"],
-        "balance_stock": stock_data["balance_stock"],
-        "records": records,
-        "invoices": invoice_records
+        "purchase_gst": purchase_gst_total
     }
-
-
 # --- WASTE ANALYTICS ENDPOINTS ---
 
 @app.get("/api/analytics/waste")

@@ -49,35 +49,45 @@ const getEntryQty = (item) => {
 };
 
 // Helper to breakdown quantities for Invoices / Sales
+// Helper to breakdown quantities for Invoices / Sales (excluding waste items from box sales)
 const getInvoiceQty = (inv) => {
   let beer = 0;
   let brandy = 0;
+  let wasteQty = 0;
 
   if (inv.items && Array.isArray(inv.items)) {
     inv.items.forEach((it) => {
-      const label = it.description || it.box_type || it.name || it.item_name || "";
+      const label = (it.description || it.box_type || it.name || it.item_name || "").toLowerCase();
       const qty = Number(it.quantity || 0);
-      if (isBeer(label)) beer += qty;
-      else if (isBrandy(label)) brandy += qty;
-      else {
+      
+      if (label.includes("waste") || label.includes("weight")) {
+        wasteQty += qty;
+      } else if (isBeer(label)) {
+        beer += qty;
+      } else if (isBrandy(label)) {
+        brandy += qty;
+      } else {
         beer += qty / 2;
         brandy += qty / 2;
       }
     });
   } else {
-    const label = inv.box_type || inv.item_name || inv.description || "";
+    const label = (inv.box_type || inv.item_name || inv.description || "").toLowerCase();
     const qty = Number(inv.quantity || inv.boxes || 0);
-    if (isBeer(label)) beer += qty;
-    else if (isBrandy(label)) brandy += qty;
-    else {
+    if (label.includes("waste") || label.includes("weight")) {
+      wasteQty += qty;
+    } else if (isBeer(label)) {
+      beer += qty;
+    } else if (isBrandy(label)) {
+      brandy += qty;
+    } else {
       beer += qty / 2;
       brandy += qty / 2;
     }
   }
 
-  return { beer, brandy, total: beer + brandy };
+  return { beer, brandy, waste: wasteQty, total: beer + brandy };
 };
-
 export default function Reports() {
   const [fromDate, setFromDate] = useState(() => {
     const date = new Date();
@@ -154,45 +164,36 @@ export default function Reports() {
   }, [filteredEntries]);
 
   // Computed Totals for Beer & Brandy Sales Invoices (Breakdown)
- const soldStats = useMemo(() => {
-    const calculatedSold = filteredInvoices.reduce(
-      (acc, inv) => {
-        const invType = (inv.invoice_type || "").toUpperCase();
-        if (invType !== "PURCHASE" && invType !== "PURCHASE_ENTRY" && invType !== "ENTRY") {
-          const q = getInvoiceQty(inv);
-          acc.beer += q.beer;
-          acc.brandy += q.brandy;
-          acc.total += q.total;
-        }
-        return acc;
-      },
-      { beer: 0, brandy: 0, total: 0 }
-    );
+// Computed Totals for Beer & Brandy Sales Invoices (Breakdown)
+  
 
-    // Force sold boxes to match purchase boxes if they are tied to the same stock pool
+  const soldStats = useMemo(() => {
     return {
-      beer: Math.min(calculatedSold.beer, purchaseStats.beer),
-      brandy: Math.min(calculatedSold.brandy, purchaseStats.brandy),
-      total: Math.min(calculatedSold.total, purchaseStats.total),
+      total: Number(reportData?.sold_stock || 0),
+      beer: Number(reportData?.sold_stock ? reportData.sold_stock * 0.33 : 0),
+      brandy: Number(reportData?.sold_stock ? reportData.sold_stock * 0.67 : 0),
     };
-  }, [filteredInvoices, purchaseStats]);
+  }, [reportData]);
 
   const balanceStats = useMemo(() => {
+    const netBeer = purchaseStats.beer - soldStats.beer;
+    const netBrandy = purchaseStats.brandy - soldStats.brandy;
+    const netTotal = purchaseStats.total - soldStats.total;
+
     return {
-      beer: purchaseStats.beer - soldStats.beer,
-      brandy: purchaseStats.brandy - soldStats.brandy,
-      total: purchaseStats.total - soldStats.total,
+      total: netTotal,
+      beer: netBeer,
+      brandy: netBrandy,
     };
   }, [purchaseStats, soldStats]);
-
   // Frontend calculated Purchase GST to sync card with statement
   const calculatedPurchaseGst = useMemo(() => {
-    return filteredEntries.reduce((sum, item) => {
+    return reportData?.purchase_gst ?? filteredEntries.reduce((sum, item) => {
       const total = Number(item.total_amount || 0);
       const taxable = Number(item.taxable_amount || total * 0.9);
       return sum + Math.max(0, total - taxable);
     }, 0);
-  }, [filteredEntries]);
+  }, [reportData, filteredEntries]);
 
   const calculatedPurchaseTotal = useMemo(() => {
     return filteredEntries.reduce((sum, item) => sum + Number(item.total_amount || 0), 0);
@@ -364,11 +365,11 @@ export default function Reports() {
             <p className={`text-2xl font-bold mt-2 ${balanceStats.total < 0 ? "text-rose-700" : "text-emerald-900"}`}>
               {Math.round(balanceStats.total).toLocaleString("en-IN")} <span className="text-sm font-normal">Boxes</span>
             </p>
-            <div className="flex items-center gap-2 mt-1.5 text-xs font-semibold text-emerald-800">
+            {/* <div className="flex items-center gap-2 mt-1.5 text-xs font-semibold text-emerald-800">
               <span className={balanceStats.beer < 0 ? "text-rose-700" : ""}>Beer: {Math.round(balanceStats.beer).toLocaleString("en-IN")}</span>
               <span>•</span>
               <span className={balanceStats.brandy < 0 ? "text-rose-700" : ""}>Brandy: {Math.round(balanceStats.brandy).toLocaleString("en-IN")}</span>
-            </div>
+            </div> */}
           </div>
           <div className="p-3 bg-emerald-100 text-emerald-600 rounded-xl group-hover:scale-105 transition">
             <CheckCircle2 className="h-6 w-6" />
@@ -448,7 +449,7 @@ export default function Reports() {
       </div>
 
       {/* Entry Records Table */}
-      <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
+      {/* <div className="bg-white border border-slate-200 rounded-2xl shadow-sm overflow-hidden">
         <div className="p-4 border-b border-slate-100 flex items-center justify-between">
           <h3 className="font-bold text-slate-800 text-sm">
             Beer & Brandy Box Entries
@@ -526,7 +527,7 @@ export default function Reports() {
             </div>
           </div>
         )}
-      </div>
+      </div> */}
 
       {/* DETAIL MODAL WITH PRINT SUPPORT */}
       {modalOpen && (
@@ -611,6 +612,7 @@ export default function Reports() {
               )}
 
               {/* MODAL TYPE: SOLD BOX */}
+             {/* MODAL TYPE: SOLD BOX */}
               {modalType === "sold_box" && (
                 <div>
                   <table className="w-full text-left text-xs border border-slate-300 border-collapse">
@@ -621,6 +623,7 @@ export default function Reports() {
                         <th className="p-2 border-r border-slate-300">Party / Company</th>
                         <th className="p-2 border-r border-slate-300 text-right">Beer Qty</th>
                         <th className="p-2 border-r border-slate-300 text-right">Brandy Qty</th>
+                        <th className="p-2 border-r border-slate-300 text-right">Waste Qty</th>
                         <th className="p-2 border-r border-slate-300 text-right">Total Sold Qty</th>
                         <th className="p-2 border-r border-slate-300 text-right">Taxable Amount</th>
                         <th className="p-2 text-right">Total Amount (₹)</th>
@@ -640,6 +643,7 @@ export default function Reports() {
                             <td className="p-2 border-r border-slate-200 font-medium">{inv.party_name || inv.customer_name || "—"}</td>
                             <td className="p-2 border-r border-slate-200 text-right font-bold text-amber-700">{Math.round(q.beer)}</td>
                             <td className="p-2 border-r border-slate-200 text-right font-bold text-purple-700">{Math.round(q.brandy)}</td>
+                            <td className="p-2 border-r border-slate-200 text-right font-bold text-rose-600">{Math.round(q.waste)}</td>
                             <td className="p-2 border-r border-slate-200 text-right font-bold text-amber-900">{q.total}</td>
                             <td className="p-2 border-r border-slate-200 text-right font-mono">{inr(taxable)}</td>
                             <td className="p-2 text-right font-mono font-bold">{inr(total)}</td>
@@ -652,6 +656,9 @@ export default function Reports() {
                         <td colSpan="3" className="p-2 text-right border-r border-slate-300 uppercase">Total:</td>
                         <td className="p-2 text-right border-r border-slate-300 text-amber-800">{Math.round(soldStats.beer).toLocaleString("en-IN")}</td>
                         <td className="p-2 text-right border-r border-slate-300 text-purple-800">{Math.round(soldStats.brandy).toLocaleString("en-IN")}</td>
+                        <td className="p-2 text-right border-r border-slate-300 text-rose-700">
+                          {Math.round(filteredInvoices.reduce((s, inv) => s + getInvoiceQty(inv).waste, 0)).toLocaleString("en-IN")}
+                        </td>
                         <td className="p-2 text-right border-r border-slate-300 text-amber-900">{Math.round(soldStats.total).toLocaleString("en-IN")} Boxes</td>
                         <td className="p-2 text-right border-r border-slate-300 font-mono text-amber-800">
                           {inr(filteredInvoices.reduce((s, inv) => s + Number(inv.taxable_amount || 0), 0))}
@@ -666,6 +673,8 @@ export default function Reports() {
               )}
 
               {/* MODAL TYPE: BALANCE STOCK */}
+           {/* MODAL TYPE: BALANCE STOCK */}
+            {/* MODAL TYPE: BALANCE STOCK */}
               {modalType === "balance_stock" && (
                 <div>
                   <table className="w-full text-left text-xs border border-slate-300 border-collapse">
@@ -678,12 +687,24 @@ export default function Reports() {
                         <th className="p-2 border-r border-slate-300 text-right">Beer Qty</th>
                         <th className="p-2 border-r border-slate-300 text-right">Brandy Qty</th>
                         <th className="p-2 border-r border-slate-300 text-right">Balance Qty</th>
-                        <th className="p-2 text-right">Total Amount</th>
+                        <th className="p-2 border-r border-slate-300">Sold Invoice No</th>
+                        <th className="p-2 text-right">Status / Action</th>
                       </tr>
                     </thead>
                     <tbody>
                       {filteredEntries.map((r, i) => {
                         const q = getEntryQty(r);
+                        
+                        // இந்த பர்சேஸ் என்ட்ரிக்கு எதிராக விற்பனை இன்வாய்ஸ் உள்ளதா எனத் தேடுதல்
+                        const matchedInv = allInvoices.find(inv => {
+                          const invDate = String(inv.invoice_date || inv.date || "").slice(0, 10);
+                          const entryDate = String(r.entry_date || r.date || "").slice(0, 10);
+                          return invDate === entryDate && (inv.invoice_type || "").toUpperCase() !== "PURCHASE";
+                        });
+
+                        const invNo = r.invoice_no || matchedInv?.invoice_no || "—";
+                        const isSold = matchedInv || invNo !== "—";
+
                         return (
                           <tr key={i} className="border-b border-slate-200">
                             <td className="p-2 border-r border-slate-200">{r.entry_date || r.date ? new Date(r.entry_date || r.date).toLocaleDateString() : "—"}</td>
@@ -693,7 +714,20 @@ export default function Reports() {
                             <td className="p-2 border-r border-slate-200 text-right font-bold text-amber-700">{Math.round(q.beer)}</td>
                             <td className="p-2 border-r border-slate-200 text-right font-bold text-purple-700">{Math.round(q.brandy)}</td>
                             <td className="p-2 border-r border-slate-200 text-right font-bold text-emerald-700">{q.total}</td>
-                            <td className="p-2 text-right font-mono font-bold">{inr(r.total_amount)}</td>
+                            <td className="p-2 border-r border-slate-200 font-mono text-cyan-800 font-bold">
+                              {invNo}
+                            </td>
+                            <td className="p-2 text-right">
+                              {isSold ? (
+                                <span className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded font-bold text-[10px]">
+                                  Sold Out
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 bg-amber-100 text-amber-800 rounded font-bold text-[10px]">
+                                  Need to Sale
+                                </span>
+                              )}
+                            </td>
                           </tr>
                         );
                       })}
@@ -701,11 +735,14 @@ export default function Reports() {
                     <tfoot className="bg-slate-100 font-bold border-t-2 border-slate-400">
                       <tr>
                         <td colSpan="4" className="p-2 text-right border-r border-slate-300 uppercase">Net Balance Stock:</td>
-                        <td className="p-2 text-right border-r border-slate-300 text-amber-800">{Math.round(balanceStats.beer).toLocaleString("en-IN")}</td>
-                        <td className="p-2 text-right border-r border-slate-300 text-purple-800">{Math.round(balanceStats.brandy).toLocaleString("en-IN")}</td>
-                        <td className="p-2 text-right border-r border-slate-300 text-emerald-800">{Math.round(balanceStats.total).toLocaleString("en-IN")} Boxes</td>
-                        <td className="p-2 text-right font-mono text-emerald-800">
-                          {inr(filteredEntries.reduce((s, r) => s + Number(r.total_amount || 0), 0))}
+                        <td className="p-2 text-right border-r border-slate-300 text-amber-800">
+                          {Math.round(purchaseStats.beer - soldStats.beer).toLocaleString("en-IN")}
+                        </td>
+                        <td className="p-2 text-right border-r border-slate-300 text-purple-800">
+                          {Math.round(purchaseStats.brandy - soldStats.brandy).toLocaleString("en-IN")}
+                        </td>
+                        <td className="p-2 text-right border-r border-slate-300 text-emerald-800" colSpan="3">
+                          {Math.round(purchaseStats.total - soldStats.total).toLocaleString("en-IN")} Boxes Unsold
                         </td>
                       </tr>
                     </tfoot>
