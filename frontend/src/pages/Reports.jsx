@@ -187,11 +187,18 @@ export default function Reports() {
     };
   }, [purchaseStats, soldStats]);
   // Frontend calculated Purchase GST to sync card with statement
-  const calculatedPurchaseGst = useMemo(() => {
+ const calculatedPurchaseGst = useMemo(() => {
     return reportData?.purchase_gst ?? filteredEntries.reduce((sum, item) => {
       const total = Number(item.total_amount || 0);
-      const taxable = Number(item.taxable_amount || total * 0.9);
-      return sum + Math.max(0, total - taxable);
+      const cgst = Number(item.cgst_amount || 0);
+      const sgst = Number(item.sgst_amount || 0);
+      let gst = cgst + sgst;
+      if (gst === 0 && total > 0) {
+        // 5% ஜிஎஸ்டி கணக்கீடு (2.5% CGST + 2.5% SGST)
+        const taxable = total / 1.05;
+        gst = total - taxable;
+      }
+      return sum + gst;
     }, 0);
   }, [reportData, filteredEntries]);
 

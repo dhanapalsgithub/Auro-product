@@ -1360,40 +1360,39 @@ def get_reports_range(fromDate: str, toDate: str, db: Session = Depends(get_db))
         start_dt = datetime.datetime.utcnow().date()
         end_dt = start_dt + datetime.timedelta(days=1)
 
-    # 1. அனைத்து என்ட்ரிகள் (All-Time Entries for Total Stock)
     all_entries = db.query(EntryModel).options(joinedload(EntryModel.shop)).all()
-    
-    # குறிப்பிட்ட தேதிக்குள்ளான என்ட்ரிகள் (Filtered Entries)
     filtered_entries = [e for e in all_entries if e.entry_date and start_dt <= e.entry_date < end_dt]
 
-    # 2. குறிப்பிட்ட தேதிக்குள்ளான இன்வாய்ஸ்கள் மட்டும் (Filtered Invoices for Sold Stock)
     invoices = db.query(InvoiceModel).options(joinedload(InvoiceModel.items)).filter(
         InvoiceModel.invoice_date >= start_dt,
         InvoiceModel.invoice_date < end_dt
     ).all()
 
-    # Purchase Total & GST (தேதிக்குள் உள்ளவை)
     purchase_invoice_total = sum([float(e.total_amount or 0.0) for e in filtered_entries])
     
+    # --- இந்த இடத்தை நீங்கள் வழங்கிய கோப்பைக் கொண்டு மாற்றவும் ---
+    settings = db.query(SettingModel).all()
+    settings_map = {s.key: s.value for s in settings}
+    cgst_pct = float(settings_map.get("cgst_percent", 2.5))
+    sgst_pct = float(settings_map.get("sgst_percent", 2.5))
+    total_gst_pct = cgst_pct + sgst_pct  # மொத்தம் 5%
+
     purchase_gst_total = 0.0
     for e in filtered_entries:
         cgst = float(e.cgst_amount or 0.0)
         sgst = float(e.sgst_amount or 0.0)
         gst = cgst + sgst
-        if gst == 0.0:
-            tot = float(e.total_amount or 0.0)
-            taxable = float(e.taxable_amount or (tot * 0.9))
-            gst = max(0.0, tot - taxable)
+        if gst == 0.0 and e.total_amount:
+            tot = float(e.total_amount)
+            taxable = tot / (1.0 + (total_gst_pct / 100.0))
+            gst = tot - taxable
         purchase_gst_total += gst
+    # ----------------------------------------------------
 
-    # Sale Total (தேதிக்குள் உள்ளவை)
     sale_invoice_total = sum([float(inv.total_amount or 0.0) for inv in invoices if (inv.invoice_type or "").upper() not in ["PURCHASE", "PURCHASE_ENTRY"]])
 
-    # 3. Stock Calculations
-    # Total Purchase Boxes (All-time or Filtered? பொதுவாக Total Purchase என்பது அனைத்துப் பொருட்களின் இருப்பு)
     total_purchase_boxes = sum([float(e.quantity or 0) for e in all_entries])
     
-    # Sold Boxes - இந்தத் தேதிக்குள் விற்றவை மட்டும்
     total_sold_boxes = 0.0
     for inv in invoices:
         inv_type = (inv.invoice_type or "").upper()
@@ -1401,12 +1400,10 @@ def get_reports_range(fromDate: str, toDate: str, db: Session = Depends(get_db))
             if inv.items:
                 for item in inv.items:
                     desc = (item.description or "").lower()
-                    # வேஸ்ட் அல்லது வெயிட் சம்பந்தப்பட்ட ஐட்டம்களை விற்பனை ஸ்டாக்கில் சேர்க்க வேண்டாம்
                     if "waste" in desc or "weight" in desc:
                         continue
                     total_sold_boxes += float(item.quantity or 0)
 
-    # Balance Stock = Total Purchase - Sold Boxes (அல்லது அந்த தேதி வரையிலான இருப்பு)
     balance_boxes = total_purchase_boxes - total_sold_boxes
 
     return {
@@ -1579,9 +1576,21 @@ def get_companies_list(db: Session = Depends(get_db)):
 @app.get("/settings")
 def get_all_settings(db: Session = Depends(get_db)):
     settings = db.query(SettingModel).all()
-    settings_map = {}
-    for s in settings:
-        settings_map[s.key] = s.value
+    settings_map = {s.key: s.value for s in settings}
+    cgst_pct = float(settings_map.get("cgst_percent", 2.5))
+    sgst_pct = float(settings_map.get("sgst_percent", 2.5))
+    total_gst_pct = cgst_pct + sgst_pct
+
+    for e in entries:
+        tot = e.total_amount or 0.0
+        cgst = float(e.cgst_amount or 0.0)
+        sgst = float(e.sgst_amount or 0.0)
+        gst = cgst + sgst
+        if gst == 0.0 and tot > 0:
+            taxable = tot / (1.0 + (total_gst_pct / 100.0))
+            gst = tot - taxable
+        purchase_invoice_total += tot
+        gst_collected_purchase += gst
         
     return {
         "cgst_percent": float(settings_map.get("cgst_percent", 2.5)),
