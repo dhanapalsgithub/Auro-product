@@ -187,20 +187,17 @@ export default function Reports() {
     };
   }, [purchaseStats, soldStats]);
   // Frontend calculated Purchase GST to sync card with statement
- const calculatedPurchaseGst = useMemo(() => {
-    return reportData?.purchase_gst ?? filteredEntries.reduce((sum, item) => {
+ // Frontend calculated Purchase GST to sync card with statement
+// பாப்பப் டேபிளுடன் சரியாக ஒத்துப் போகும் ஜிஎஸ்டி கணக்கீடு
+  const calculatedPurchaseGst = useMemo(() => {
+    return filteredEntries.reduce((sum, item) => {
       const total = Number(item.total_amount || 0);
-      const cgst = Number(item.cgst_amount || 0);
-      const sgst = Number(item.sgst_amount || 0);
-      let gst = cgst + sgst;
-      if (gst === 0 && total > 0) {
-        // 5% ஜிஎஸ்டி கணக்கீடு (2.5% CGST + 2.5% SGST)
-        const taxable = total / 1.05;
-        gst = total - taxable;
-      }
+      // பாப்பப் டேபிள் மற்றும் API பயன்படுத்தும் அதே 5% ஜிஎஸ்டி ஃபார்முலா
+      const taxable = Number(item.taxable_amount || (total ? total / 1.05 : 0));
+      const gst = Math.max(0, total - taxable);
       return sum + gst;
     }, 0);
-  }, [reportData, filteredEntries]);
+  }, [filteredEntries]);
 
   const calculatedPurchaseTotal = useMemo(() => {
     return filteredEntries.reduce((sum, item) => sum + Number(item.total_amount || 0), 0);
@@ -757,7 +754,7 @@ export default function Reports() {
                 </div>
               )}
 
-              {/* MODAL TYPE: GST & INVOICE TOTALS */}
+             {/* MODAL TYPE: GST & INVOICE TOTALS */}
               {(modalType === "purchase_invoice_total" || modalType === "purchase_gst" || modalType === "sale_invoice_total" || modalType === "sales_gst") && (
                 <div>
                   <table className="w-full text-left text-xs border border-slate-300 border-collapse">
@@ -776,8 +773,9 @@ export default function Reports() {
                         const invNo = item.invoice_no || item.shop_no || item.id;
                         const dateStr = item.invoice_date || item.entry_date || item.date || item.created_at;
                         const partyName = item.party_name || item.customer_name || item.shop_name || "—";
-                        const taxable = Number(item.taxable_amount || (item.total_amount ? item.total_amount * 0.9 : 0));
                         const total = Number(item.total_amount || 0);
+                        // கார்டில் பயன்படுத்திய அதே 1.05 ஃபார்முலா இங்கே பயன்படுத்தப்படுகிறது
+                        const taxable = Number(item.taxable_amount || (total ? total / 1.05 : 0));
                         const gst = Math.max(0, total - taxable);
                         return (
                           <tr key={i} className="border-b border-slate-200">
@@ -795,10 +793,17 @@ export default function Reports() {
                       <tr>
                         <td colSpan="3" className="p-2 text-right border-r border-slate-300 uppercase">Total:</td>
                         <td className="p-2 text-right border-r border-slate-300 font-mono text-blue-800">
-                          {inr((modalType.includes("sale") ? filteredInvoices : filteredEntries).reduce((s, it) => s + Number(it.taxable_amount || (it.total_amount ? it.total_amount * 0.9 : 0)), 0))}
+                          {inr((modalType.includes("sale") ? filteredInvoices : filteredEntries).reduce((s, it) => {
+                            const tot = Number(it.total_amount || 0);
+                            return s + Number(it.taxable_amount || (tot ? tot / 1.05 : 0));
+                          }, 0))}
                         </td>
                         <td className="p-2 border-r border-slate-300 font-mono text-blue-800">
-                          {inr((modalType.includes("sale") ? filteredInvoices : filteredEntries).reduce((s, it) => s + Math.max(0, Number(it.total_amount || 0) - Number(it.taxable_amount || (it.total_amount ? it.total_amount * 0.9 : 0))), 0))}
+                          {inr((modalType.includes("sale") ? filteredInvoices : filteredEntries).reduce((s, it) => {
+                            const tot = Number(it.total_amount || 0);
+                            const tax = Number(it.taxable_amount || (tot ? tot / 1.05 : 0));
+                            return s + Math.max(0, tot - tax);
+                          }, 0))}
                         </td>
                         <td className="p-2 text-right font-mono text-blue-800">
                           {inr((modalType.includes("sale") ? filteredInvoices : filteredEntries).reduce((s, it) => s + Number(it.total_amount || 0), 0))}
@@ -808,7 +813,6 @@ export default function Reports() {
                   </table>
                 </div>
               )}
-
               <div className="pt-8 border-t border-slate-300 flex justify-between text-xs mt-6">
                 <div>
                   <p className="font-bold">Prepared By</p>

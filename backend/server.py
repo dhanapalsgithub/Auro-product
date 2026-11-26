@@ -1349,7 +1349,6 @@ def get_daily_report(day: Optional[str] = None, start_date: Optional[str] = None
         "records": records,
         "invoices": invoice_records
     }
-
 @app.get("/api/reports/range")
 @app.get("/reports/range")
 def get_reports_range(fromDate: str, toDate: str, db: Session = Depends(get_db)):
@@ -1369,25 +1368,19 @@ def get_reports_range(fromDate: str, toDate: str, db: Session = Depends(get_db))
     ).all()
 
     purchase_invoice_total = sum([float(e.total_amount or 0.0) for e in filtered_entries])
-    
-    # --- இந்த இடத்தை நீங்கள் வழங்கிய கோப்பைக் கொண்டு மாற்றவும் ---
+
     settings = db.query(SettingModel).all()
     settings_map = {s.key: s.value for s in settings}
     cgst_pct = float(settings_map.get("cgst_percent", 2.5))
     sgst_pct = float(settings_map.get("sgst_percent", 2.5))
-    total_gst_pct = cgst_pct + sgst_pct  # மொத்தம் 5%
+    total_gst_pct = cgst_pct + sgst_pct  # 5%
 
     purchase_gst_total = 0.0
     for e in filtered_entries:
-        cgst = float(e.cgst_amount or 0.0)
-        sgst = float(e.sgst_amount or 0.0)
-        gst = cgst + sgst
-        if gst == 0.0 and e.total_amount:
-            tot = float(e.total_amount)
-            taxable = tot / (1.0 + (total_gst_pct / 100.0))
-            gst = tot - taxable
+        tot = float(e.total_amount or 0.0)
+        taxable = float(e.taxable_amount or (tot / (1.0 + (total_gst_pct / 100.0)) if tot > 0 else 0.0))
+        gst = max(0.0, tot - taxable)
         purchase_gst_total += gst
-    # ----------------------------------------------------
 
     sale_invoice_total = sum([float(inv.total_amount or 0.0) for inv in invoices if (inv.invoice_type or "").upper() not in ["PURCHASE", "PURCHASE_ENTRY"]])
 
@@ -1414,6 +1407,7 @@ def get_reports_range(fromDate: str, toDate: str, db: Session = Depends(get_db))
         "sale_invoice_total": sale_invoice_total,
         "purchase_gst": purchase_gst_total
     }
+
 # --- WASTE ANALYTICS ENDPOINTS ---
 
 @app.get("/api/analytics/waste")
