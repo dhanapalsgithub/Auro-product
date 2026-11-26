@@ -10,6 +10,9 @@ bacend deploy - render
 
 https://distant-curtain-sixtieth.ngrok-free.dev/scan-qr
 
+dhanapaul2020@gmail.com
+dhana@123
+
 
 
 

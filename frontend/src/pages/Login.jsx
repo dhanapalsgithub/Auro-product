@@ -25,7 +25,7 @@ export default function Login() {
 
     setTimeout(() => {
       const validUsers = [
-        { email: "dhanapaul2020@gmail.com", password: "dhana@123", role: "admin" },
+        { email: "dhanapaul2020@gmail.com", password: "", role: "" },
         { email: "userone@gmail.com", password: "one@123", role: "admin" },
         { email: "usertwo@gmail.com", password: "two@123", role: "user" },
         { email: "userthree@gmail.com", password: "three@123", role: "user" },
