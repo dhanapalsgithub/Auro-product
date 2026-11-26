@@ -4,8 +4,8 @@ import { Loader2, Lock, Mail, Package, FileText, X, ShieldCheck } from "lucide-r
 
 export default function Login() {
   const navigate = useNavigate();
-  const [email, setEmail] = useState("dhanapaul2020@gmail.com");
-  const [password, setPassword] = useState("dhana@123");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeModal, setActiveModal] = useState(null); // 'terms' | 'gst' | 'privacy' | 'about' | null
